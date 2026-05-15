@@ -1,0 +1,64 @@
+# ═══════════════════════════════════════════════════════════════
+# Scoring Configuration — Provider Ranking Weights & Formulas
+# The ranking agent reads these weights and dynamically computes
+# composite scores. Change weights here to shift ranking behavior.
+# ═══════════════════════════════════════════════════════════════
+
+# ── Composite Score Weights (must sum to 1.0) ───────────────
+weights:
+  distance: 0.30
+  rating: 0.25
+  availability: 0.20
+  experience: 0.15
+  response_time: 0.10
+
+# ── Availability Score Mapping ──────────────────────────────
+availability_scores:
+  "Available": 1.0
+  "Available Soon": 0.7
+  "Busy": 0.3
+  "Offline": 0.0
+
+# ── Distance Scoring ────────────────────────────────────────
+distance:
+  decay_constant_km: 5.0          # exp(-distance / decay_constant)
+  max_distance_km: 50.0           # beyond this, score = 0
+  default_distance_km: 10.0       # when no user coordinates available
+
+# ── Rating Normalization ────────────────────────────────────
+rating:
+  min_value: 1.0
+  max_value: 5.0
+  # normalized: (rating - min) / (max - min)
+
+# ── Experience Scoring ──────────────────────────────────────
+experience:
+  max_years_cap: 20               # beyond this, no extra benefit
+  # normalized: min(years / max_cap, 1.0)
+
+# ── Response Time Scoring ───────────────────────────────────
+response_time:
+  ideal_minutes: 5                # perfect score at or below
+  max_minutes: 120                # zero score at or above
+  # score: max(0, 1 - (time - ideal) / (max - ideal))
+
+# ── Price Preference Modifiers ──────────────────────────────
+price_modifiers:
+  "Low":
+    budget_conscious: 0.15        # bonus when user prefers cheap
+    premium_seeker: -0.05
+  "Medium":
+    budget_conscious: 0.05
+    premium_seeker: 0.05
+  "High":
+    budget_conscious: -0.10
+    premium_seeker: 0.15
+
+# ── Verification Bonus ──────────────────────────────────────
+verification_bonus: 0.05           # added to final score if verified
+
+# ── Minimum Thresholds ──────────────────────────────────────
+thresholds:
+  min_composite_score: 0.25        # below this → not recommended
+  min_providers_to_show: 1
+  max_providers_to_show: 5

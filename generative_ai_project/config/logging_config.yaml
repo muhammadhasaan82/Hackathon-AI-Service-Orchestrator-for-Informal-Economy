@@ -1,0 +1,50 @@
+# ═══════════════════════════════════════════════════════════════
+# Logging Configuration
+# ═══════════════════════════════════════════════════════════════
+
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  detailed:
+    format: "%(asctime)s | %(levelname)-8s | %(name)-25s | %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+  json:
+    format: '{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","message":"%(message)s"}'
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    level: DEBUG
+    formatter: detailed
+    stream: ext://sys.stdout
+  file:
+    class: logging.FileHandler
+    level: INFO
+    formatter: json
+    filename: "logs/app.log"
+    mode: a
+
+loggers:
+  agents:
+    level: DEBUG
+    handlers: [console]
+    propagate: false
+  rag:
+    level: INFO
+    handlers: [console]
+    propagate: false
+  api:
+    level: INFO
+    handlers: [console]
+    propagate: false
+
+root:
+  level: INFO
+  handlers: [console]
+
+# ── Tracing (OpenTelemetry-ready) ───────────────────────────
+tracing:
+  enabled: false
+  service_name: "service-orchestrator"
+  export_endpoint: "http://localhost:4317"

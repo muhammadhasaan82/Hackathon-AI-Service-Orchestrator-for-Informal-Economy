@@ -1,0 +1,87 @@
+# ==============================================================================
+# Strict Gitignore for AI Service Orchestrator
+# ==============================================================================
+
+# 1. Datasets and Large Media
+# ------------------------------------------------------------------------------
+dataset/
+*.csv
+*.tsv
+*.npy
+*.npz
+*.h5
+*.parquet
+*.jsonl
+data/embeddings/
+data/vectordb/
+data/fine_tuned/
+
+# 2. Environment Variables & Secrets
+# ------------------------------------------------------------------------------
+.env
+.env.local
+.env.*
+!.env.example
+secret/
+secrets/
+*.pem
+*.key
+*.cert
+
+# 3. Cache and Ephemeral Data
+# ------------------------------------------------------------------------------
+data/cache/
+*.db
+*.sqlite
+*.sqlite3
+
+# 4. Python Bytecode and Caches
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# 5. Virtual Environments
+# ------------------------------------------------------------------------------
+venv/
+.venv/
+env/
+.env_dir/
+
+# 6. Rust and Builds
+# ------------------------------------------------------------------------------
+rust_cag/target/
+rust_cag/Cargo.lock
+build/
+dist/
+*.egg-info/
+*.egg
+*.whl
+*.so
+*.dylib
+
+# 7. OS and IDE Artifacts
+# ------------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 8. Documents & Proposal Files
+# ------------------------------------------------------------------------------
+pdf_pages/
+*.pdf
+"Backend Architecture Proposal_ Agentic AI Service Orchestrator.pdf"
+"Google Antigravity Hackathon - Challenge.pdf"

@@ -1,0 +1,12 @@
+[package]
+name = "cag_cache"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance KV-cache for Cache-Augmented Generation (CAG)"
+
+[lib]
+name = "cag_cache"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }

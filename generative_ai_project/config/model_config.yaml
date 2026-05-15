@@ -1,0 +1,70 @@
+# ═══════════════════════════════════════════════════════════════
+# Model Configuration — Fully Open-Source / Self-Hosted
+# Gemma 4 via Ollama. No API keys. No cloud dependencies.
+# ═══════════════════════════════════════════════════════════════
+
+# ── Active Provider ─────────────────────────────────────────
+active_provider: "ollama"
+
+# ── Provider Configurations ─────────────────────────────────
+providers:
+  ollama:
+    base_url_env: "OLLAMA_BASE_URL"
+    base_url_default: "http://localhost:11434"
+    model_id: "gemma4:e4b"
+    generation_config:
+      temperature: 0.10          # Very low for deterministic reasoning
+      top_p: 0.80
+      top_k: 30
+      max_output_tokens: 4096
+      num_ctx: 8192              # Context window size
+      repeat_penalty: 1.1
+    # Ollama-native tool/function calling
+    supports_tools: true
+    supports_structured_output: true
+
+  ollama_large:
+    base_url_env: "OLLAMA_BASE_URL"
+    base_url_default: "http://localhost:11434"
+    model_id: "gemma4:26b"
+    generation_config:
+      temperature: 0.10
+      top_p: 0.80
+      top_k: 30
+      max_output_tokens: 8192
+      num_ctx: 16384
+
+# ── Embedding Configuration (Open-Source) ───────────────────
+embedding:
+  model_name: "BAAI/bge-large-en-v1.5"
+  dimensions: 1024
+  batch_size: 128
+  normalize: true
+  device: "cpu"                   # "cuda" if GPU available
+
+# ── Reranking Configuration (Open-Source) ───────────────────
+reranking:
+  enabled: true
+  model_name: "BAAI/bge-reranker-base"
+  top_k_input: 50                 # candidates from vector search
+  top_n_output: 10                # output after reranking
+  device: "cpu"
+
+# ── Streaming ───────────────────────────────────────────────
+streaming:
+  enabled: true
+  chunk_size: 32
+
+# ── Inference Tuning ────────────────────────────────────────
+inference:
+  max_reasoning_steps: 6
+  confidence_threshold: 0.70
+  timeout_seconds: 60             # higher for local model
+  retry_count: 2
+  retry_delay_ms: 1000
+
+# ── ADK V2 Integration ─────────────────────────────────────
+adk:
+  enabled: true
+  model_string: "ollama_chat/gemma4:e4b"   # LiteLLM format
+  agent_framework: "google-adk"

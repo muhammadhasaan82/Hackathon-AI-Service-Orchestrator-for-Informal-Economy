@@ -1,0 +1,68 @@
+# ═══════════════════════════════════════════════════════════════
+# Docker Compose — AI Service Orchestrator (Full Open-Source Stack)
+# Services: Ollama (Gemma 4) + Weaviate + Redis + PostgreSQL
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ── Ollama — Local LLM Server (Gemma 4) ───────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: orchestrator-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          memory: 8G
+    restart: unless-stopped
+
+  # ── Weaviate — Vector Store ───────────────────────────────
+  weaviate:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.30.0
+    container_name: orchestrator-weaviate
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      QUERY_DEFAULTS_LIMIT: 50
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      ENABLE_MODULES: ""
+      CLUSTER_HOSTNAME: "node1"
+      DEFAULT_VECTORIZER_MODULE: "none"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    restart: unless-stopped
+
+  # ── Redis — Session Cache ─────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: orchestrator-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # ── PostgreSQL — Bookings & Episodic Memory ───────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: orchestrator-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: orchestrator
+      POSTGRES_USER: orchestrator
+      POSTGRES_PASSWORD: orchestrator_dev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  weaviate_data:
+  redis_data:
+  postgres_data:

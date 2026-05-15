@@ -1,0 +1,118 @@
+# ═══════════════════════════════════════════════════════════════
+# Agent Definitions — Agentic AI Service Orchestrator
+# Each agent's role, capabilities, and routing rules are defined
+# here. The orchestrator reads this and self-assembles the pipeline.
+# ═══════════════════════════════════════════════════════════════
+
+# ── Pipeline Order ──────────────────────────────────────────
+pipeline:
+  - intent
+  - discovery
+  - ranking
+  - booking
+  - followup
+
+# ── Agent Definitions ───────────────────────────────────────
+agents:
+  orchestrator:
+    name: "Triage Router"
+    role: "Root orchestrator that routes user requests to specialized agents"
+    max_turns: 20
+    escalation:
+      enabled: true
+      trigger_conditions:
+        - "confidence_below_threshold"
+        - "max_retries_exceeded"
+        - "explicit_user_request"
+      human_handoff_message: "I'm connecting you with a human operator who can better assist you."
+
+  intent:
+    name: "Intent Understanding Agent"
+    role: "Extracts structured intent from natural language input in English, Urdu, or Roman Urdu"
+    capabilities:
+      - "service_type_extraction"
+      - "location_extraction"
+      - "time_extraction"
+      - "language_detection"
+      - "urgency_assessment"
+    confidence_threshold: 0.70
+    max_clarification_attempts: 2
+    supported_languages:
+      - "English"
+      - "Urdu"
+      - "Roman Urdu"
+
+  discovery:
+    name: "Provider Discovery Agent"
+    role: "Searches the provider database using semantic and metadata-filtered retrieval"
+    capabilities:
+      - "semantic_search"
+      - "metadata_filtering"
+      - "geo_distance_calculation"
+    search_config:
+      max_candidates: 50           # initial RAG retrieval count
+      metadata_filters:
+        - "category"
+        - "city"
+        - "area"
+        - "availability"
+        - "price_range"
+      availability_filter:
+        include: ["Available", "Available Soon"]
+        exclude_if_better_exists: ["Busy"]
+        always_exclude: ["Offline"]
+
+  ranking:
+    name: "Ranking & Recommendation Agent"
+    role: "Scores and ranks providers using weighted probabilistic criteria and generates reasoning"
+    capabilities:
+      - "composite_scoring"
+      - "reasoning_generation"
+      - "top_n_selection"
+    top_n: 3                       # number of recommendations to show
+
+  booking:
+    name: "Booking Simulation Agent"
+    role: "Simulates booking confirmation, provider assignment, and scheduling"
+    capabilities:
+      - "booking_creation"
+      - "confirmation_generation"
+      - "receipt_generation"
+    booking_states:
+      - "PENDING"
+      - "CONFIRMED"
+      - "IN_PROGRESS"
+      - "COMPLETED"
+      - "CANCELLED"
+    auto_confirm: true              # skip manual confirmation for demo
+    time_slot_duration_minutes: 60
+
+  followup:
+    name: "Follow-Up Automation Agent"
+    role: "Handles post-booking reminders, status updates, and completion flows"
+    capabilities:
+      - "reminder_scheduling"
+      - "status_check"
+      - "cancellation"
+      - "rescheduling"
+      - "completion_confirmation"
+    reminder_before_minutes: 60
+    followup_after_hours: 24
+
+# ── Tool Permissions ────────────────────────────────────────
+tool_permissions:
+  intent:
+    - "parse_intent"
+  discovery:
+    - "search_providers"
+    - "calculate_distance"
+  ranking:
+    - "rank_providers"
+  booking:
+    - "create_booking"
+    - "send_notification"
+    - "get_booking_status"
+  followup:
+    - "send_notification"
+    - "get_booking_status"
+    - "update_booking"
