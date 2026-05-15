@@ -1,0 +1,6 @@
+# Ignore PDF documents and pdf_pages directory at the root
+pdf_pages/
+*.pdf
+"Backend Architecture Proposal_ Agentic AI Service Orchestrator.pdf"
+"Google Antigravity Hackathon - Challenge.pdf"
+service_providers_50000.csv

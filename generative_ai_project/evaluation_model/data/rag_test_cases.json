@@ -1,0 +1,92 @@
+[
+  {
+    "id": "tc_001",
+    "query": "AC technician in G-13 Islamabad",
+    "service_type": "AC Technician",
+    "city": "Islamabad",
+    "area": "G-13",
+    "expected_category": "AC Technician",
+    "expected_cities": ["Islamabad"]
+  },
+  {
+    "id": "tc_002",
+    "query": "plumber DHA Karachi pipe leak emergency",
+    "service_type": "Plumber",
+    "city": "Karachi",
+    "area": "DHA",
+    "expected_category": "Plumber",
+    "expected_cities": ["Karachi"]
+  },
+  {
+    "id": "tc_003",
+    "query": "mujhe electrician chahiye Gulberg Lahore mein",
+    "service_type": "Electrician",
+    "city": "Lahore",
+    "area": "Gulberg",
+    "expected_category": "Electrician",
+    "expected_cities": ["Lahore"]
+  },
+  {
+    "id": "tc_004",
+    "query": "home tutor class 10 maths Islamabad",
+    "service_type": "Home Tutor",
+    "city": "Islamabad",
+    "area": null,
+    "expected_category": "Home Tutor",
+    "expected_cities": ["Islamabad"]
+  },
+  {
+    "id": "tc_005",
+    "query": "beautician bridal makeup Johar Town Lahore",
+    "service_type": "Beautician",
+    "city": "Lahore",
+    "area": "Johar Town",
+    "expected_category": "Beautician",
+    "expected_cities": ["Lahore"]
+  },
+  {
+    "id": "tc_006",
+    "query": "mobile phone repair screen broken Saddar Rawalpindi",
+    "service_type": "Mobile Repair",
+    "city": "Rawalpindi",
+    "area": "Saddar",
+    "expected_category": "Mobile Repair",
+    "expected_cities": ["Rawalpindi"]
+  },
+  {
+    "id": "tc_007",
+    "query": "deep house cleaning Hayatabad Peshawar",
+    "service_type": "Cleaning Service",
+    "city": "Peshawar",
+    "area": "Hayatabad",
+    "expected_category": "Cleaning Service",
+    "expected_cities": ["Peshawar"]
+  },
+  {
+    "id": "tc_008",
+    "query": "washing machine repair Faisalabad",
+    "service_type": "Appliance Repair",
+    "city": "Faisalabad",
+    "area": null,
+    "expected_category": "Appliance Repair",
+    "expected_cities": ["Faisalabad"]
+  },
+  {
+    "id": "tc_009",
+    "query": "computer technician laptop repair I-8 Islamabad",
+    "service_type": "Computer Technician",
+    "city": "Islamabad",
+    "area": "I-8",
+    "expected_category": "Computer Technician",
+    "expected_cities": ["Islamabad"]
+  },
+  {
+    "id": "tc_010",
+    "query": "carpenter furniture repair Peoples Colony Faisalabad",
+    "service_type": "Carpenter",
+    "city": "Faisalabad",
+    "area": "Peoples Colony",
+    "expected_category": "Carpenter",
+    "expected_cities": ["Faisalabad"]
+  }
+]
