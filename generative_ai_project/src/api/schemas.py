@@ -57,6 +57,14 @@ class ChatResponse(BaseModel):
     status: str
     agent_trace: list[dict] = Field(default_factory=list)
     booking: Optional[dict] = None
+    followup: Optional[dict] = Field(
+        None,
+        description=(
+            "Follow-up notification plan with scheduled reminders, "
+            "status timeline, and immediate notification payload. "
+            "The mobile app uses this to schedule local push notifications."
+        ),
+    )
     providers: Optional[list[dict]] = None
     intent: Optional[dict] = None
     latency_ms: Optional[float] = None
@@ -188,3 +196,70 @@ class HealthResponse(BaseModel):
     vector_store_count: int
     uptime_seconds: float
     services: Optional[dict] = None
+
+
+# ═══════════════════════════════════════════════════════════════
+# Follow-Up & Notifications
+# ═══════════════════════════════════════════════════════════════
+
+class FollowUpReminderRequest(BaseModel):
+    """Request to generate a reminder for a specific booking and tier."""
+    tier: str = Field("final_reminder", description="Reminder tier: early_heads_up | preparation | final_reminder")
+    language: str = Field("English", description="Response language: English | Roman Urdu")
+
+
+class FollowUpStatusRequest(BaseModel):
+    """Request to generate a status update notification."""
+    event_type: str = Field(
+        ...,
+        description="Status event: provider_notified | provider_preparing | provider_en_route | service_started | service_completed",
+    )
+    language: str = Field("English", description="Response language")
+
+
+class NotificationActionButton(BaseModel):
+    """A tappable action button in a mobile notification."""
+    action: str = Field(..., description="Action identifier: view_booking | call_provider | reschedule | cancel | rate_service")
+    label: str = Field(..., description="Display label for the button")
+    icon: str = Field("📋", description="Emoji icon for the button")
+
+
+class ScheduledReminder(BaseModel):
+    """A single scheduled reminder in the follow-up plan."""
+    reminder_id: str
+    tier_name: str
+    fire_at_utc: float = Field(..., description="Unix timestamp when the reminder should fire")
+    fire_at_iso: str = Field(..., description="ISO-8601 formatted fire time")
+    minutes_before_appointment: float
+    priority: str = Field("normal", description="Notification priority: low | normal | high")
+    channel: str = Field("push", description="Delivery channel: push | sms | in_app")
+    icon: str
+    description: str
+    action_buttons: list[str] = Field(default_factory=list)
+    notification_text: Optional[dict] = Field(None, description="LLM-generated title + body")
+
+
+class StatusTimelineEvent(BaseModel):
+    """A status update event in the booking lifecycle timeline."""
+    event_id: str
+    event_type: str
+    fire_at_utc: float
+    fire_at_iso: str
+    status_transition: str
+    icon: str
+    description: str
+    message_key: str
+    action_buttons: list[dict] = Field(default_factory=list)
+
+
+class FollowUpPlanResponse(BaseModel):
+    """Complete follow-up plan returned by schedule_followup."""
+    followup_id: Optional[str] = None
+    booking_id: str
+    scheduled_reminders: list[dict] = Field(default_factory=list)
+    status_timeline: list[dict] = Field(default_factory=list)
+    post_completion_actions: list[dict] = Field(default_factory=list)
+    immediate_notification: Optional[dict] = None
+    total_scheduled: int = 0
+    metadata: Optional[dict] = None
+

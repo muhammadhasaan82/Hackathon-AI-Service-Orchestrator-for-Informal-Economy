@@ -77,6 +77,7 @@ async def chat(request: ChatRequest):
         status=result.get("status", "unknown"),
         agent_trace=result.get("agent_trace", []),
         booking=result.get("booking"),
+        followup=result.get("followup"),
         providers=result.get("providers"),
         intent=result.get("intent"),
         latency_ms=result.get("latency_ms"),

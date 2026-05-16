@@ -86,7 +86,7 @@ booking_confirmation: |
   3. What to expect
   4. How to cancel or reschedule
 
-# ── Follow-Up Prompt ────────────────────────────────────────
+# ── Follow-Up Reminder Prompt ───────────────────────────────
 followup_reminder: |
   Generate a reminder message for an upcoming service appointment.
 
@@ -95,8 +95,83 @@ followup_reminder: |
   Provider: {provider_name}
   Scheduled: {scheduled_time}
   Time Until: {time_until}
+  Reminder Tier: {reminder_tier}
+  Urgency: {urgency}
 
   Generate in {language}. Be brief and friendly.
+  The tone should be {tone}.
+  If the tier is "final_reminder", make it more urgent.
+  If the tier is "early_heads_up", keep it casual and informative.
+
+# ── Follow-Up Notification Reasoning Prompt ─────────────────
+# The LLM THINKS about the booking context to generate a
+# personalized notification title + body for the mobile app.
+# This is the probabilistic layer — same booking can produce
+# different phrasings based on context signals.
+followup_notification: |
+  You are the Follow-Up Agent for an AI Service Orchestrator. Generate a
+  mobile push notification for the following event.
+
+  CONTEXT:
+  - Booking ID: {booking_id}
+  - Service Type: {service_type}
+  - Provider: {provider_name}
+  - Location: {location}
+  - Scheduled Time: {scheduled_time}
+  - Event Type: {event_type}
+  - Event Description: {event_description}
+  - User Language: {language}
+  - Urgency: {urgency}
+  - Service Category: {service_category}
+  - Time of Day Context: {time_context}
+
+  REASONING DIRECTIVES:
+  - Tone: {tone}
+  - You MUST personalize based on: {personalization_signals}
+
+  GENERATE a JSON object with EXACTLY these fields:
+  {{
+    "title": "<notification title, max {max_title_length} chars>",
+    "body": "<notification body, max {max_body_length} chars>",
+    "reasoning": "<1-sentence explanation of WHY you chose this phrasing>"
+  }}
+
+  THINK step-by-step:
+  1. What does the user need to know RIGHT NOW about this event?
+  2. How should the tone differ based on service category and urgency?
+  3. If language is Roman Urdu, use romanized Urdu naturally.
+
+  Respond in valid JSON only.
+
+# ── Status Update Notification Prompt ───────────────────────
+followup_status_update: |
+  Generate a status update notification for a booking lifecycle event.
+
+  Booking: {booking_id} for {service_type}
+  Provider: {provider_name}
+  Event: {event_type} — {event_description}
+  New Status: {new_status}
+  Provider Phone: {provider_phone}
+
+  Generate in {language}. Tone: {tone}.
+  Include the provider's name naturally in the message.
+  If the event is "provider_en_route", mention they're heading to the location.
+  If the event is "service_completed", congratulate and suggest rating.
+
+  Return a single concise notification message (max 200 chars).
+
+# ── Post-Completion Rating Prompt ───────────────────────────
+followup_rating_prompt: |
+  Generate a friendly rating request for a completed service.
+
+  Service: {service_type}
+  Provider: {provider_name}
+  Booking ID: {booking_id}
+  Completed At: {completed_at}
+
+  Generate in {language}. Tone: warm and appreciative.
+  Ask the user to rate their experience on a 1-5 scale.
+  Keep it under 150 characters.
 
 # ── Clarification Prompts ───────────────────────────────────
 clarification:

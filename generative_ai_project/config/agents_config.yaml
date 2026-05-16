@@ -89,15 +89,141 @@ agents:
 
   followup:
     name: "Follow-Up Automation Agent"
-    role: "Handles post-booking reminders, status updates, and completion flows"
+    role: >
+      Handles post-booking lifecycle automation: schedules reminders based
+      on urgency and timing, generates status update notifications, and
+      simulates push notification payloads for the mobile app. The agent
+      THINKS about the booking context (urgency, time-until-appointment,
+      service category) to decide WHICH follow-up actions to schedule
+      and HOW to phrase each notification in the user's language.
     capabilities:
       - "reminder_scheduling"
-      - "status_check"
+      - "status_update_simulation"
+      - "notification_payload_generation"
       - "cancellation"
       - "rescheduling"
       - "completion_confirmation"
-    reminder_before_minutes: 60
-    followup_after_hours: 24
+      - "rating_prompt"
+
+    # ── Reminder Tiers ──────────────────────────────────────────
+    # Multiple reminders scheduled at decreasing intervals before
+    # the appointment. The agent picks which tiers to schedule based
+    # on how far away the appointment is. Each tier defines:
+    #   - minutes_before: when to fire relative to scheduled_time
+    #   - priority: notification priority for the mobile OS
+    #   - channel: where to deliver (push, sms, in_app)
+    #   - icon: emoji for the mobile notification UI
+    reminder_tiers:
+      - tier: "early_heads_up"
+        minutes_before: 1440          # 24 hours before
+        priority: "low"
+        channel: "in_app"
+        icon: "📅"
+        description: "Day-before reminder so the user can prepare"
+      - tier: "preparation"
+        minutes_before: 120           # 2 hours before
+        priority: "normal"
+        channel: "push"
+        icon: "⏰"
+        description: "Preparation window — provider is getting ready"
+      - tier: "final_reminder"
+        minutes_before: 30            # 30 minutes before
+        priority: "high"
+        channel: "push"
+        icon: "🔔"
+        description: "Final reminder — provider is on the way"
+
+    # ── Urgency Multipliers ─────────────────────────────────────
+    # When the user marked the request as urgent, compress the
+    # reminder schedule by this factor. The agent uses this to
+    # deterministically adjust reminder_tiers.minutes_before.
+    urgency_multipliers:
+      urgent: 0.25                    # urgent: reminders 4x sooner
+      normal: 1.0                     # normal: use configured values
+      flexible: 1.5                   # flexible: space reminders out
+
+    # ── Status Simulation Timeline ──────────────────────────────
+    # After booking confirmation, simulate provider-side status
+    # updates at these offsets. Each generates a notification
+    # payload the mobile app can display as a timeline event.
+    status_updates:
+      - event: "provider_notified"
+        delay_minutes: 2
+        status: "CONFIRMED"
+        icon: "✅"
+        message_key: "provider_accepted"
+        description: "Provider has been notified and accepted the job"
+      - event: "provider_preparing"
+        delay_minutes: 30
+        status: "IN_PROGRESS"
+        icon: "🔧"
+        message_key: "provider_preparing"
+        description: "Provider is preparing for your appointment"
+      - event: "provider_en_route"
+        delay_minutes_before_appointment: 45
+        status: "IN_PROGRESS"
+        icon: "🚗"
+        message_key: "provider_en_route"
+        description: "Provider is heading to your location"
+      - event: "service_started"
+        delay_minutes_after_appointment: 0
+        status: "IN_PROGRESS"
+        icon: "⚡"
+        message_key: "service_started"
+        description: "Service has begun"
+      - event: "service_completed"
+        delay_minutes_after_appointment: 60
+        status: "COMPLETED"
+        icon: "🎉"
+        message_key: "service_completed"
+        description: "Service completed — please rate your experience"
+
+    # ── Post-Completion Actions ─────────────────────────────────
+    # After the simulated service completes, prompt the user for
+    # rating and optionally suggest a re-booking.
+    post_completion:
+      rating_prompt_delay_minutes: 5
+      rating_prompt_icon: "⭐"
+      rebooking_suggestion_delay_hours: 168   # 1 week later
+      rebooking_suggestion_icon: "🔁"
+
+    # ── Notification Channel Config ─────────────────────────────
+    # Controls which channels are enabled and their payload format.
+    notification_channels:
+      push:
+        enabled: true
+        max_title_length: 50
+        max_body_length: 200
+        sound: "default"
+        vibrate: true
+      sms:
+        enabled: false                # disabled for demo
+        max_length: 160
+      in_app:
+        enabled: true
+        persist_hours: 72             # how long to keep in-app notifs
+
+    # ── LLM Reasoning Directives ────────────────────────────────
+    # The LLM uses these to decide tone, language, and content of
+    # each notification. This is the probabilistic layer — the model
+    # reasons about the user's context to generate the message.
+    reasoning_directives:
+      tone: "warm, professional, concise"
+      personalization_signals:
+        - "user's detected language"
+        - "service category (e.g. formal tone for tutor, casual for plumber)"
+        - "urgency level"
+        - "time of day"
+      max_notification_body_tokens: 100
+      include_provider_name: true
+      include_booking_id: true
+      include_actionable_buttons: true
+      button_actions:
+        - "view_booking"
+        - "call_provider"
+        - "reschedule"
+        - "cancel"
+        - "rate_service"
 
 # ── Tool Permissions ────────────────────────────────────────
 tool_permissions:
@@ -113,6 +239,10 @@ tool_permissions:
     - "send_notification"
     - "get_booking_status"
   followup:
+    - "schedule_reminder"
+    - "generate_notification"
+    - "simulate_status_update"
     - "send_notification"
     - "get_booking_status"
     - "update_booking"
+    - "prompt_rating"
