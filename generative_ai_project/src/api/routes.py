@@ -48,7 +48,7 @@ def set_dependencies(orchestrator, vector_store, session_store, start_time):
 
 def _check_init():
     if _orchestrator is None:
-        raise HTTPException(503, detail="System not initialized. Start Ollama + Weaviate first.")
+        raise HTTPException(503, detail="System not initialized. Ensure Unsloth model is loaded and Weaviate is running.")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -570,7 +570,7 @@ async def health():
         vector_store_count=_vector_store.count if _vector_store else 0,
         uptime_seconds=time.time() - _start_time if _start_time else 0,
         services={
-            "ollama": _orchestrator.llm.check_health() if _orchestrator and hasattr(_orchestrator.llm, "check_health") else False,
+            "llm": _orchestrator.llm.check_health() if _orchestrator and hasattr(_orchestrator.llm, "check_health") else False,
             "weaviate": _vector_store is not None,
             "session_store": _session_store is not None,
             "booking_store": _orchestrator.booking_store is not None if _orchestrator else False,
