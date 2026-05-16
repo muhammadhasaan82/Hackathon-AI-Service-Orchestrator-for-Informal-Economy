@@ -1,13 +1,31 @@
 # ═══════════════════════════════════════════════════════════════
 # Model Configuration — Fully Open-Source / Self-Hosted
-# Gemma 4 via Ollama. No API keys. No cloud dependencies.
+# Gemma via Unsloth. No external inference API required.
 # ═══════════════════════════════════════════════════════════════
 
 # ── Active Provider ─────────────────────────────────────────
-active_provider: "ollama"
+active_provider: "unsloth"
 
 # ── Provider Configurations ─────────────────────────────────
 providers:
+  unsloth:
+    model_id_env: "UNSLOTH_MODEL_ID"
+    model_id: ""
+    max_seq_length_env: "UNSLOTH_MAX_SEQ_LENGTH"
+    load_in_4bit_env: "UNSLOTH_LOAD_IN_4BIT"
+    dtype_env: "UNSLOTH_DTYPE"
+    hf_token_env: "HF_TOKEN"
+    load_in_4bit: true
+    dtype: null
+    generation_config:
+      temperature: 0.10
+      top_p: 0.80
+      top_k: 30
+      max_output_tokens: 4096
+      max_seq_length: 8192
+    supports_tools: false
+    supports_structured_output: true
+
   ollama:
     base_url_env: "OLLAMA_BASE_URL"
     base_url_default: "http://localhost:11434"
@@ -66,5 +84,5 @@ inference:
 # ── ADK V2 Integration ─────────────────────────────────────
 adk:
   enabled: true
-  model_string: "ollama_chat/gemma4:e4b"   # LiteLLM format
+  model_string: "unsloth_inprocess"
   agent_framework: "google-adk"

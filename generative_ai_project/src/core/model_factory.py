@@ -1,8 +1,8 @@
 """
 Model Factory — Creates LLM instances from YAML configuration.
 
-Reads model_config.yaml and instantiates the Ollama client for
-local Gemma 4 inference. Fully open-source, no API keys.
+Reads model_config.yaml and instantiates the configured local LLM client.
+Default runtime is Unsloth for local Gemma inference.
 """
 
 import logging
@@ -30,11 +30,11 @@ def get_model(purpose: str = "default", config_override: Optional[dict] = None) 
     """
     Factory method to create an LLM instance.
 
-    Returns an OllamaClient connected to the local Gemma 4 model.
+    Returns the configured local LLM client.
     """
     config = _load_yaml("model_config.yaml")
 
-    provider_name = os.getenv("MODEL_PROVIDER", config.get("active_provider", "ollama"))
+    provider_name = os.getenv("MODEL_PROVIDER", config.get("active_provider", "unsloth"))
     provider_config = config["providers"].get(provider_name)
 
     if not provider_config:
@@ -53,29 +53,60 @@ def get_model(purpose: str = "default", config_override: Optional[dict] = None) 
         candidate_count=gen_params.get("candidate_count", 1),
     )
 
-    model_id = os.getenv("OLLAMA_MODEL", provider_config["model_id"])
+    model_id_env = provider_config.get("model_id_env")
+    if model_id_env:
+        model_id = os.getenv(model_id_env, provider_config.get("model_id", "")).strip()
+    elif provider_name.startswith("ollama"):
+        model_id = os.getenv("OLLAMA_MODEL", provider_config["model_id"])
+    else:
+        model_id = provider_config.get("model_id", "").strip()
 
-    # Determine base URL
-    base_url_env = provider_config.get("base_url_env", "OLLAMA_BASE_URL")
-    base_url = os.getenv(base_url_env, provider_config.get("base_url_default", "http://localhost:11434"))
+    if provider_name == "unsloth":
+        from .unsloth_client import UnslothClient
 
-    num_ctx = gen_params.get("num_ctx", 8192)
+        max_seq_length_env = provider_config.get("max_seq_length_env", "UNSLOTH_MAX_SEQ_LENGTH")
+        load_in_4bit_env = provider_config.get("load_in_4bit_env", "UNSLOTH_LOAD_IN_4BIT")
+        dtype_env = provider_config.get("dtype_env", "UNSLOTH_DTYPE")
+        hf_token_env = provider_config.get("hf_token_env", "HF_TOKEN")
 
-    # Instantiate Ollama client
-    from .ollama_client import OllamaClient
-    return OllamaClient(
-        model_id=model_id,
-        base_url=base_url,
-        generation_config=generation_config,
-        num_ctx=num_ctx,
-    )
+        max_seq_length = int(os.getenv(max_seq_length_env, gen_params.get("max_seq_length", 8192)))
+        load_in_4bit = os.getenv(
+            load_in_4bit_env,
+            str(provider_config.get("load_in_4bit", True)),
+        ).lower() in ("1", "true", "yes", "on")
+        dtype = os.getenv(dtype_env, provider_config.get("dtype"))
+        hf_token = os.getenv(hf_token_env) or None
+
+        return UnslothClient(
+            model_id=model_id,
+            generation_config=generation_config,
+            max_seq_length=max_seq_length,
+            dtype=dtype,
+            load_in_4bit=load_in_4bit,
+            hf_token=hf_token,
+        )
+
+    if provider_name.startswith("ollama"):
+        base_url_env = provider_config.get("base_url_env", "OLLAMA_BASE_URL")
+        base_url = os.getenv(base_url_env, provider_config.get("base_url_default", "http://localhost:11434"))
+        num_ctx = gen_params.get("num_ctx", 8192)
+
+        from .ollama_client import OllamaClient
+        return OllamaClient(
+            model_id=model_id,
+            base_url=base_url,
+            generation_config=generation_config,
+            num_ctx=num_ctx,
+        )
+
+    raise ValueError(f"Unsupported model provider: {provider_name}")
 
 
 def get_adk_model_string() -> str:
     """Get the LiteLLM model string for ADK V2 integration."""
     config = _load_yaml("model_config.yaml")
     adk_config = config.get("adk", {})
-    return adk_config.get("model_string", "ollama_chat/gemma4:e4b")
+    return adk_config.get("model_string", "")
 
 
 def load_config(filename: str) -> dict:
