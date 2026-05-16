@@ -4,14 +4,21 @@ Ranking Agent — Probabilistic scoring + LLM reasoning.
 Computes deterministic composite scores from config weights,
 then uses the LLM to generate natural language reasoning
 explaining WHY each provider was ranked.
+
+THREADING NOTE:
+    Scoring is the most CPU-intensive step in the pipeline when
+    evaluating 50+ candidates. batch_score_providers parallelizes
+    the per-provider math (haversine + weighted composite) across
+    the shared thread pool. The sort and LLM call remain sequential.
 """
 
 import json
 import logging
+import time
 from typing import Optional
 
 from ..core.base_llm import BaseLLM
-from .tools import score_provider, format_provider_summary
+from .tools import batch_score_providers, format_provider_summary
 
 logger = logging.getLogger("agents.ranking")
 
@@ -55,18 +62,28 @@ class RankingAgent:
         """
         price_pref = intent.get("price_preference")
 
-        # Step 1: Score all candidates deterministically
+        # Step 1: Score all candidates deterministically (CONCURRENT)
+        # batch_score_providers runs score_provider() for each candidate
+        # in parallel threads. Results preserve input order, so the
+        # subsequent sort produces identical rankings regardless of
+        # thread scheduling.
+        score_start = time.time()
+        score_results = batch_score_providers(
+            candidates=candidates,
+            scoring_config=self.scoring_config,
+            user_lat=user_lat,
+            user_lon=user_lon,
+            price_preference=price_pref,
+        )
+
+        # Attach scores back to candidates (single-threaded, safe)
         scored = []
-        for candidate in candidates:
-            score_result = score_provider(
-                provider=candidate,
-                scoring_config=self.scoring_config,
-                user_lat=user_lat,
-                user_lon=user_lon,
-                price_preference=price_pref,
-            )
+        for candidate, score_result in zip(candidates, score_results):
             candidate["score_result"] = score_result
             scored.append(candidate)
+
+        score_ms = (time.time() - score_start) * 1000
+        logger.info(f"Concurrent scoring completed in {score_ms:.1f}ms for {len(candidates)} candidates")
 
         # Step 2: Sort by composite score
         scored.sort(key=lambda x: x["score_result"]["composite_score"], reverse=True)

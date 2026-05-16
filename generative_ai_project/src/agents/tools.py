@@ -4,13 +4,23 @@ Agent Tools — Function definitions for agent tool use.
 Each tool is a standalone function that agents can call.
 Tools encapsulate deterministic logic (search, score, book)
 while the LLM handles probabilistic reasoning.
+
+THREADING NOTE:
+    score_provider() and calculate_distance() are pure functions
+    (no shared mutable state). This makes them safe to run in parallel
+    via ThreadPoolExecutor. The batch_* wrappers below use the shared
+    pool from core.concurrency to score/distance-calc N providers
+    concurrently, cutting latency from O(N) to ~O(N/workers).
 """
 
 import logging
 import math
 import time
 import uuid
+from functools import partial
 from typing import Optional
+
+from ..core.concurrency import parallel_map
 
 logger = logging.getLogger("agents.tools")
 
@@ -178,3 +188,99 @@ def format_provider_summary(provider: dict, score_result: Optional[dict] = None)
             lines.append(f"   Distance: {dist} km")
         lines.append(f"   Match Score: {score_result['composite_score']:.0%}")
     return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════
+# BATCH PARALLEL OPERATIONS
+# ═══════════════════════════════════════════════════════════════
+# These wrappers run per-provider scoring and distance calculations
+# concurrently using the shared ThreadPoolExecutor from core.concurrency.
+#
+# WHY HERE AND NOT IN THE AGENT:
+#   Keeping batch logic in tools.py keeps agents thin (they just call
+#   batch_score_providers instead of managing futures). The ranking
+#   agent stays focused on sort + LLM reasoning.
+#
+# DETERMINISM GUARANTEE:
+#   parallel_map(preserve_order=True) returns results in the SAME order
+#   as the input list. The subsequent sort in ranking_agent.py then
+#   produces identical ordering regardless of thread execution order.
+# ═══════════════════════════════════════════════════════════════
+
+
+def batch_score_providers(
+    candidates: list[dict],
+    scoring_config: dict,
+    user_lat: Optional[float] = None,
+    user_lon: Optional[float] = None,
+    price_preference: Optional[str] = None,
+) -> list[dict]:
+    """
+    Score all candidates concurrently using the thread pool.
+
+    Each candidate is scored independently (no cross-provider state),
+    making this embarrassingly parallel. Returns score dicts in the
+    same order as the input candidates list.
+
+    Args:
+        candidates: Provider dicts from discovery.
+        scoring_config: Weights and thresholds from scoring_config.yaml.
+        user_lat/user_lon: User's GPS coordinates (optional).
+        price_preference: User's price preference string (optional).
+
+    Returns:
+        List[dict] of score results, one per candidate, in input order.
+    """
+    # partial() freezes the shared args so each thread only needs the provider
+    _score_one = partial(
+        score_provider,
+        scoring_config=scoring_config,
+        user_lat=user_lat,
+        user_lon=user_lon,
+        price_preference=price_preference,
+    )
+
+    # parallel_map preserves input order → deterministic downstream sort
+    score_results = parallel_map(
+        lambda candidate: _score_one(provider=candidate),
+        candidates,
+        preserve_order=True,
+    )
+
+    logger.info(
+        f"Batch scored {len(candidates)} providers concurrently"
+    )
+    return score_results
+
+
+def batch_calculate_distances(
+    providers: list[dict],
+    user_lat: float,
+    user_lon: float,
+) -> list[float]:
+    """
+    Calculate haversine distances for all providers concurrently.
+
+    Used in the /providers/search and /providers/nearby API routes
+    where distance must be computed for each result after retrieval.
+
+    Args:
+        providers: List of provider dicts with metadata.latitude/longitude.
+        user_lat/user_lon: User's GPS coordinates.
+
+    Returns:
+        List[float] of distances in km, in input order.
+    """
+    def _calc_one(provider: dict) -> float:
+        meta = provider.get("metadata", provider)
+        return calculate_distance(
+            user_lat, user_lon,
+            meta.get("latitude", 0.0), meta.get("longitude", 0.0),
+        )
+
+    distances = parallel_map(_calc_one, providers, preserve_order=True)
+
+    logger.info(
+        f"Batch calculated {len(providers)} distances concurrently"
+    )
+    return distances

@@ -26,6 +26,9 @@ from .schemas import (
 
 logger = logging.getLogger("api.routes")
 
+# Lazy import for batch distance calculation (avoids circular import at module level)
+# We import inside the endpoint functions where needed.
+
 router = APIRouter(prefix="/api/v1", tags=["Service Orchestrator"])
 
 # ── Dependencies set by app.py during lifespan ──────────────
@@ -129,14 +132,16 @@ async def search_providers(request: ProviderSearchRequest):
         filtered = [r for r in filtered if r.get("metadata", {}).get("verified_provider", False)]
 
     # Add distance if user coordinates provided
+    # THREADING: batch_calculate_distances runs haversine for all
+    # providers concurrently. This is the main CPU cost in this
+    # endpoint when processing 100+ results from Weaviate.
     if request.user_lat and request.user_lon:
-        from ..rag.retriever import haversine_distance
-        for r in filtered:
-            meta = r.get("metadata", {})
-            r["distance_km"] = haversine_distance(
-                request.user_lat, request.user_lon,
-                meta.get("latitude", 0), meta.get("longitude", 0),
-            )
+        from ..agents.tools import batch_calculate_distances
+        distances = batch_calculate_distances(
+            filtered, request.user_lat, request.user_lon,
+        )
+        for r, dist in zip(filtered, distances):
+            r["distance_km"] = dist
 
     # Sort
     sort_key = {
@@ -242,7 +247,6 @@ async def get_nearby_providers(
     """
     _check_init()
     from ..rag.embedder import embed_query
-    from ..rag.retriever import haversine_distance
 
     search_query = f"{category + ' ' if category else ''}service provider nearby"
     query_embedding = embed_query(search_query)
@@ -254,10 +258,14 @@ async def get_nearby_providers(
     )
 
     # Filter by radius
+    # THREADING: Calculate distances for all results concurrently,
+    # then filter by radius. This avoids a serial loop over 200
+    # results (the max Weaviate returns for nearby search).
+    from ..agents.tools import batch_calculate_distances
+    all_distances = batch_calculate_distances(results, lat, lon)
+
     nearby = []
-    for r in results:
-        meta = r.get("metadata", {})
-        dist = haversine_distance(lat, lon, meta.get("latitude", 0), meta.get("longitude", 0))
+    for r, dist in zip(results, all_distances):
         if dist <= radius_km:
             r["distance_km"] = round(dist, 2)
             nearby.append(r)

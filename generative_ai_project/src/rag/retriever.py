@@ -120,15 +120,24 @@ class ProviderRetriever:
             results = results[:n_results]
 
         # Enrich with distance if user coordinates provided
-        for result in results:
-            meta = result.get("metadata", {})
-            if user_lat is not None and user_lon is not None:
-                provider_lat = meta.get("latitude", 0.0)
-                provider_lon = meta.get("longitude", 0.0)
-                result["distance_km"] = haversine_distance(
-                    user_lat, user_lon, provider_lat, provider_lon
+        # THREADING: Distance calculation for each result is independent
+        # (pure haversine math). Parallelize across the thread pool to
+        # reduce latency when enriching 10-50 reranked results.
+        if user_lat is not None and user_lon is not None:
+            from ..core.concurrency import parallel_map
+
+            def _calc_dist(result: dict) -> float:
+                meta = result.get("metadata", {})
+                return haversine_distance(
+                    user_lat, user_lon,
+                    meta.get("latitude", 0.0), meta.get("longitude", 0.0),
                 )
-            else:
+
+            distances = parallel_map(_calc_dist, results, preserve_order=True)
+            for result, dist in zip(results, distances):
+                result["distance_km"] = dist
+        else:
+            for result in results:
                 result["distance_km"] = None
 
         logger.info(f"Retriever returned {len(results)} candidates (reranked={rerank_enabled})")

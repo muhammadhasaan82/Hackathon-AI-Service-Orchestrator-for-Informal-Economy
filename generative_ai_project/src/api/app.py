@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ..core.model_factory import get_model, load_all_configs
+from ..core.concurrency import shutdown_executor
 from ..rag.vector_store import WeaviateVectorStore
 from ..rag.indexer import index_providers
 from ..state.session_store import SessionStore
@@ -110,11 +111,13 @@ async def lifespan(app: FastAPI):
     logger.info(f"  System Ready | {vector_store.count if vector_store else 0} providers")
     logger.info(f"  Hybrid Engine: RAG + Reranking + CAG + Context Engineering")
     logger.info(f"  Startup: {time.time() - start_time:.1f}s")
+    logger.info(f"  Thread Pool: MAX_WORKERS={os.getenv('MAX_WORKERS', '8')}")
     logger.info("═" * 60)
 
     yield
 
     # Cleanup
+    shutdown_executor()  # Gracefully drain the shared thread pool
     if vector_store:
         vector_store.close()
     logger.info("Shutdown complete.")
