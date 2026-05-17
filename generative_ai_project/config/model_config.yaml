@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════════
 # Model Configuration — Fully Open-Source / Self-Hosted
-# Gemma via Unsloth. No external inference API required.
+# Gemma 4 31B via Unsloth. No external inference API required.
 # ═══════════════════════════════════════════════════════════════
 
 # ── Active Provider ─────────────────────────────────────────
@@ -10,7 +10,7 @@ active_provider: "unsloth"
 providers:
   unsloth:
     model_id_env: "UNSLOTH_MODEL_ID"
-    model_id: ""
+    model_id: "unsloth/gemma-4-31b-it-bnb-4bit"
     max_seq_length_env: "UNSLOTH_MAX_SEQ_LENGTH"
     load_in_4bit_env: "UNSLOTH_LOAD_IN_4BIT"
     dtype_env: "UNSLOTH_DTYPE"
@@ -29,7 +29,7 @@ providers:
   ollama:
     base_url_env: "OLLAMA_BASE_URL"
     base_url_default: "http://localhost:11434"
-    model_id: "gemma4:e4b"
+    model_id: "gemma4:31b"
     generation_config:
       temperature: 0.10          # Very low for deterministic reasoning
       top_p: 0.80
@@ -44,7 +44,7 @@ providers:
   ollama_large:
     base_url_env: "OLLAMA_BASE_URL"
     base_url_default: "http://localhost:11434"
-    model_id: "gemma4:26b"
+    model_id: "gemma4:31b"
     generation_config:
       temperature: 0.10
       top_p: 0.80

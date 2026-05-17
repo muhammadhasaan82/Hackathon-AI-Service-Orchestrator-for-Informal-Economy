@@ -4,7 +4,7 @@
 
 # ── Base Model ──────────────────────────────────────────────
 base_model:
-  name: "google/gemma-4-E4B-it"
+  name: "google/gemma-4-31B-it"
   quantization: "4bit"            # QLoRA for memory efficiency
   torch_dtype: "bfloat16"
 

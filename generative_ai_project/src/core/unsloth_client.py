@@ -27,7 +27,7 @@ _DTYPE_MAP = {
 
 
 class UnslothClient(BaseLLM):
-    """Gemma LLM client loaded locally with Unsloth."""
+    """Gemma 4 31B LLM client loaded locally with Unsloth."""
 
     provider_name = "unsloth"
     health_service_name = "unsloth"

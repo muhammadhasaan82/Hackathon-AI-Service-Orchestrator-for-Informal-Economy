@@ -61,7 +61,7 @@ set HF_TOKEN=<your-huggingface-token-if-required>
 If you prefer Ollama instead, switch the provider and pull the model:
 ```bash
 set MODEL_PROVIDER=ollama
-ollama pull gemma4:e4b
+ollama pull gemma4:31b
 ```
  
 ### 2. Start Infrastructure

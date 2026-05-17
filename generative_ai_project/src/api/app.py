@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     start_time = time.time()
     logger.info("═" * 60)
     logger.info("  AI Service Orchestrator — OPEN SOURCE STACK")
-    logger.info("  Gemma (Unsloth) + Weaviate + Redis + PostgreSQL")
+    logger.info("  Gemma 4 31B (Unsloth) + Weaviate + Redis + PostgreSQL")
     logger.info("═" * 60)
 
     # Initialize OpenTelemetry tracing
@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
     # Load all configs
     configs = load_all_configs()
 
-    # Initialize LLM (Unsloth — local Gemma, in-process)
+    # Initialize LLM (Unsloth — local Gemma 4 31B, in-process)
     llm = get_model()
     provider = os.getenv("MODEL_PROVIDER", "unsloth")
     logger.info(f"LLM: {llm.model_id} via {provider} (local, in-process)")
