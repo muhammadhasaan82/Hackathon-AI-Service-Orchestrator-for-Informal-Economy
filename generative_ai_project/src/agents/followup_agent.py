@@ -52,10 +52,12 @@ class FollowUpAgent:
         booking_store: BookingStore,
         prompts_config: dict,
         agents_config: dict,
+        guardrails=None,
     ):
         self.llm = llm
         self.booking_store = booking_store
         self.prompts_config = prompts_config
+        self.guardrails = guardrails
 
         # ── Read all behavior from config (soft-coded) ──────────
         self.config = agents_config.get("agents", {}).get("followup", {})
@@ -519,12 +521,16 @@ class FollowUpAgent:
                 max_body_length=channel_cfg.get("max_body_length", 200),
             )
 
+            system_instruction = (
+                "You are a notification text generator for a mobile service booking app. "
+                "Generate concise, actionable notification content. Respond in valid JSON only."
+            )
+            if self.guardrails:
+                system_instruction = self.guardrails.compose_system_instruction("followup", system_instruction)
+
             response = await self.llm.generate(
                 prompt=prompt,
-                system_instruction=(
-                    "You are a notification text generator for a mobile service booking app. "
-                    "Generate concise, actionable notification content. Respond in valid JSON only."
-                ),
+                system_instruction=system_instruction,
             )
 
             # Parse LLM response
@@ -535,7 +541,7 @@ class FollowUpAgent:
             notif = self._fallback_notification(booking, "booking_confirmed", language)
 
         # Build full notification payload
-        return {
+        payload = {
             "notification_id": f"NOTIF-{uuid.uuid4().hex[:6].upper()}",
             "type": "booking_confirmed",
             "channel": "push",
@@ -558,6 +564,7 @@ class FollowUpAgent:
             },
             "created_at": time.time(),
         }
+        return self.guardrails.sanitize_payload(payload) if self.guardrails else payload
 
     async def _generate_reminder_text(
         self,
@@ -588,23 +595,29 @@ class FollowUpAgent:
                 tone=tone,
             )
 
+            system_instruction = "Generate a brief, friendly reminder notification. Keep it under 200 characters."
+            if self.guardrails:
+                system_instruction = self.guardrails.compose_system_instruction("followup", system_instruction)
+
             response = await self.llm.generate(
                 prompt=prompt,
-                system_instruction="Generate a brief, friendly reminder notification. Keep it under 200 characters.",
+                system_instruction=system_instruction,
             )
 
-            return {
+            payload = {
                 "title": f"{tier.get('icon', '🔔')} Reminder — {booking.get('service_type', 'Service')}",
                 "body": response.text.strip(),
                 "tier": tier_name,
             }
+            return self.guardrails.sanitize_payload(payload) if self.guardrails else payload
         except Exception as e:
             logger.warning(f"LLM reminder generation failed: {e}. Using fallback.")
-            return {
+            payload = {
                 "title": f"{tier.get('icon', '🔔')} Reminder",
                 "body": f"Your {booking.get('service_type', 'service')} with {booking.get('provider_name', '')} is in {tier.get('minutes_before_appointment', 60):.0f} minutes.",
                 "tier": tier_name,
             }
+            return self.guardrails.sanitize_payload(payload) if self.guardrails else payload
 
     async def _generate_status_text(
         self,
@@ -632,14 +645,19 @@ class FollowUpAgent:
                 tone=tone,
             )
 
+            system_instruction = "Generate a concise status update notification. Max 200 characters."
+            if self.guardrails:
+                system_instruction = self.guardrails.compose_system_instruction("followup", system_instruction)
+
             response = await self.llm.generate(
                 prompt=prompt,
-                system_instruction="Generate a concise status update notification. Max 200 characters.",
+                system_instruction=system_instruction,
             )
-            return response.text.strip()
+            return self.guardrails.sanitize_text(response.text.strip()) if self.guardrails else response.text.strip()
         except Exception as e:
             logger.warning(f"LLM status text failed: {e}. Using fallback.")
-            return f"{event.get('icon', '📋')} {event.get('description', 'Status updated')} — {booking.get('provider_name', 'Provider')}"
+            text = f"{event.get('icon', '📋')} {event.get('description', 'Status updated')} — {booking.get('provider_name', 'Provider')}"
+            return self.guardrails.sanitize_text(text) if self.guardrails else text
 
     # ═══════════════════════════════════════════════════════════
     # PRIVATE: Utility methods

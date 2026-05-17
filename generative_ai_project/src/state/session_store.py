@@ -51,6 +51,8 @@ class SessionStore:
                 "ranked_providers": [],
                 "selected_provider": None,
                 "booking": None,
+                "followup": None,
+                "awaiting_booking_confirmation": False,
             },
             "reasoning_trace": [],
             "metadata": {
@@ -142,6 +144,10 @@ class SessionStore:
             self._redis.delete(f"session:{session_id}")
         else:
             self._fallback.pop(session_id, None)
+
+    def save_session(self, session_id: str, session: dict):
+        """Persist a fully-mutated session object."""
+        self._save(session_id, session)
 
     def _save(self, session_id: str, session: dict):
         """Persist session to storage."""

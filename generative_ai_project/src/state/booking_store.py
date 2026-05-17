@@ -131,10 +131,13 @@ class BookingStore:
         else:
             return sqlite3.connect(self._sqlite_path)
 
-    def create_booking(self, session_id: str, provider: dict, service_type: str, location: str, scheduled_time: Optional[str] = None, user_notes: Optional[str] = None) -> dict:
+    def create_booking(self, session_id: str, provider: dict, service_type: str, location: str, scheduled_time: Optional[str] = None, user_notes: Optional[str] = None, status: str = "CONFIRMED") -> dict:
         """Create a new booking."""
         booking_id = f"BK-{uuid.uuid4().hex[:8].upper()}"
         now = time.time()
+
+        if status not in self.VALID_STATES:
+            status = "CONFIRMED"
 
         booking = {
             "booking_id": booking_id,
@@ -144,7 +147,7 @@ class BookingStore:
             "service_type": service_type,
             "location": location,
             "scheduled_time": scheduled_time or "To be confirmed",
-            "status": "CONFIRMED",
+            "status": status,
             "price_range": provider.get("price_range", "N/A"),
             "provider_phone": provider.get("phone_number", "N/A"),
             "provider_email": provider.get("email", "N/A"),
@@ -180,7 +183,7 @@ class BookingStore:
                 f"""INSERT INTO booking_events
                    (booking_id, event_type, new_status, details, timestamp)
                    VALUES ({ph},{ph},{ph},{ph},{ph})""",
-                (booking_id, "CREATED", "CONFIRMED", json.dumps({"provider": booking["provider_name"]}), now),
+                (booking_id, "CREATED", booking["status"], json.dumps({"provider": booking["provider_name"]}), now),
             )
             conn.commit()
         finally:

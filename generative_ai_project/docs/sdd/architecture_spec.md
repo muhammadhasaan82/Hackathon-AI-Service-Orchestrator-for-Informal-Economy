@@ -2,75 +2,147 @@
 
 ## 1. System Overview
 
-The AI Service Orchestrator is a **decentralized, multi-agent system** that automates the full lifecycle of service requests for Pakistan's informal economy. It processes natural language input (English, Urdu, Roman Urdu) and routes through a pipeline of specialized agents to deliver provider recommendations and booking confirmations.
+The AI Service Orchestrator is a **guardrail-first, config-driven multi-agent system** for Pakistan's informal economy. It processes natural language requests in English, Urdu, and Roman Urdu, discovers relevant local providers, ranks them with deterministic math, and requires explicit user confirmation before finalizing a booking in the conversational flow.
 
-## 2. Technology Stack (Fully Open-Source)
+The implementation is intentionally split into:
+
+- **Deterministic layers** for policy checks, retrieval filters, scoring, state transitions, and follow-up scheduling
+- **Probabilistic layers** for multilingual intent interpretation, ranking explanations, booking copy, and follow-up message phrasing
+- **Soft-coded control planes** in YAML so behavior can be tuned without changing core agent code
+
+## 2. Technology Stack
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| LLM | Gemma 4 E4B (via Ollama) | Reasoning, NLU, text generation |
-| Embeddings | BAAI/bge-large-en-v1.5 | 1024-dim semantic vectors |
-| Reranking | BAAI/bge-reranker-base | Cross-encoder precision re-scoring |
-| Vector Store | Weaviate | Hybrid semantic + keyword search |
-| Session Cache | Redis | Short-term conversation state |
-| DBMS | PostgreSQL | Booking records, episodic memory |
-| CAG | Rust/PyO3 | KV-cache for golden knowledge |
-| Fine-Tuning | LoRA/QLoRA (PEFT) | Domain adaptation for informal economy |
-| Orchestration | Google ADK V2 | Agent framework with LiteLLM bridge |
-| API | FastAPI | REST endpoints with SSE streaming |
-| Observability | OpenTelemetry | Distributed tracing and spans |
-| Deployment | Docker Compose | Container orchestration |
+| LLM Runtime | Gemma 4 via Unsloth or Ollama | Intent extraction, reasoning, message generation |
+| Embeddings | BAAI/bge-large-en-v1.5 | Semantic query + provider representation |
+| Reranking | BAAI/bge-reranker-base | Precision candidate re-ordering after retrieval |
+| Vector Store | Weaviate | Hybrid retrieval over provider metadata + vectors |
+| Session State | Redis with in-memory fallback | Conversation history, ranked options, booking workflow state |
+| Booking Store | PostgreSQL with SQLite fallback | Booking persistence and status transitions |
+| CAG | Rust/PyO3 with Python fallback | Golden knowledge lookup |
+| API | FastAPI | Mobile-facing REST interface |
+| Observability | OpenTelemetry | Request and agent tracing |
+| Deployment | Docker Compose | Local orchestration for core services |
 
-## 3. Hybrid AI Knowledge Engine (4-Tier)
+## 3. Soft-Coded Control Layers
 
-### Tier 1: Prompt Engineering + Context Engineering
-- System-level context assembly via `ContextEngine`
-- Dynamic prompt templates from `prompts_config.yaml`
-- Token budget management with priority-based truncation
-- Anti-hallucination guardrails
+### 3.1 Guardrails
 
-### Tier 2: Agentic RAG + Reranking
-- **Phase 1**: Weaviate metadata filtering (city, category, availability)
-- **Phase 2**: BGE embedding similarity search (cosine distance)
-- **Phase 3**: Cross-encoder reranking (BAAI/bge-reranker-base)
-- 50K provider dataset indexed with 1024-dim vectors
+- Source of truth: `config/guardrails_config.yaml`
+- Runtime component: `src/guardrails/engine.py`
+- Policy domains:
+  - input validation and risk patterns
+  - intent confidence thresholds
+  - booking confirmation rules
+  - output sanitization and internal detail redaction
 
-### Tier 3: Cache-Augmented Generation (CAG)
-- Static "Golden Knowledge" preloaded into context window
-- Rust PyO3 KV-cache for thread-safe, low-latency access
-- Domain: service categories, city areas, Roman Urdu mappings, business rules
-- Python fallback when Rust module not compiled
+### 3.2 Agent Behavior
 
-### Tier 4: Fine-Tuning (LoRA)
-- QLoRA 4-bit quantization on Gemma 4
-- Target modules: q_proj, k_proj, v_proj, o_proj
-- Domain-specific training data: intent parsing in Roman Urdu
-- Hot-swappable adapter loading at inference time
+- Source of truth: `config/agents_config.yaml`
+- Defines pipeline roles, search behavior, reminder tiers, lifecycle events, and notification actions
 
-## 4. Agent Pipeline
+### 3.3 Deterministic Ranking
+
+- Source of truth: `config/scoring_config.yaml`
+- Governs weights, availability scoring, distance decay, verification bonuses, and recommendation thresholds
+
+### 3.4 Prompting and Context
+
+- Source of truth: `config/prompts_config.yaml`
+- LLM instructions are dynamically combined with runtime guardrail directives before generation
+
+## 4. Hybrid AI Knowledge Engine
+
+### Tier 1: Guardrails
+
+- Blocks prompt injection and internal prompt exposure requests
+- Redirects out-of-scope queries
+- Escalates emergency-like requests away from the booking workflow
+- Enforces explicit confirmation before conversational booking
+
+### Tier 2: Prompt + Context Engineering
+
+- Prompt templates are YAML-driven
+- Runtime guardrail directives are appended to model instructions
+- Conversation history is injected for better multi-turn intent continuity
+
+### Tier 3: Agentic RAG + Reranking
+
+- Discovery applies metadata filtering and fallback broadening
+- Retrieval supports user coordinates for distance-aware search
+- Reranking refines candidate ordering before deterministic scoring
+
+### Tier 4: Deterministic Scoring
+
+- Provider ranking uses fixed math from config
+- Scores are grounded in distance, rating, availability, experience, response time, price preference, and verification bonus
+- Results are reproducible for the same inputs
+
+### Tier 5: CAG
+
+- Golden knowledge supplements prompts with domain-specific context
+- Rust acceleration is optional; Python fallback is supported
+
+### Tier 6: Fine-Tuning
+
+- Optional LoRA/QLoRA path remains part of the design for domain adaptation
+
+### Tier 7: Follow-Up Automation
+
+- Schedule structure is deterministic from config
+- Notification phrasing is generated probabilistically by the LLM under guardrail constraints
+
+## 5. Agent Pipeline
 
 ```
-User Message → [Intent Agent] → [Discovery Agent] → [Ranking Agent] → [Booking Agent] → [Follow-Up Agent]
-                    ↓                   ↓                  ↓                ↓                  ↓
-              NLU/JSON          RAG+Rerank          Score+Reason      Create Booking       Reminder
+User Message
+  → Input Guardrails
+  → Intent Agent
+  → Intent Guardrails / Clarification Gate
+  → Discovery Agent
+  → Ranking Agent
+  → Confirmation Gate
+  → Booking Agent
+  → Follow-Up Agent
 ```
 
-Each agent step produces an OpenTelemetry span for full observability.
+Each major stage emits OpenTelemetry spans and persists workflow state into the session store.
 
-## 5. State Management
+## 6. State Management
 
-- **Redis**: Conversation history, agent state, reasoning traces (TTL-based expiry)
-- **PostgreSQL**: Booking records with ACID guarantees, event sourcing
-- **Graceful Fallback**: In-memory dict (sessions) and SQLite (bookings) when services unavailable
+### Session Store
 
-## 6. Data Flow
+Stored per `session_id`:
 
-1. User sends message via `POST /api/v1/chat`
-2. Orchestrator creates/resumes session in Redis
-3. Intent Agent extracts structured intent via Gemma 4
-4. Discovery Agent queries Weaviate with BGE embeddings + metadata filters
-5. Reranker rescores top-K results with cross-encoder
-6. Ranking Agent computes deterministic scores from `scoring_config.yaml`
-7. Gemma 4 generates natural language reasoning for rankings
-8. Booking Agent creates record in PostgreSQL
-9. Full response returned with reasoning trace
+- conversation history
+- current structured intent
+- ranked provider shortlist
+- selected provider
+- booking object
+- follow-up plan
+- `awaiting_booking_confirmation` flag
+- reasoning trace
+
+### Booking Store
+
+Booking persistence includes:
+
+- booking record
+- lifecycle status (`PENDING`, `CONFIRMED`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED`)
+- event log of booking transitions
+
+## 7. Data Flow
+
+1. Client sends `POST /api/v1/chat` with message and optional coordinates.
+2. Orchestrator creates or resumes the session.
+3. Input guardrails evaluate the message before any downstream agent work.
+4. Intent Agent extracts structured intent using multilingual LLM reasoning.
+5. Intent guardrails decide whether to clarify, escalate, or proceed.
+6. Discovery Agent retrieves provider candidates with retrieval fallback logic.
+7. Ranking Agent computes deterministic scores and generates a grounded explanation.
+8. Orchestrator stores the shortlist and returns `awaiting_booking_confirmation` when confirmation is required.
+9. User confirms a specific option on a later turn.
+10. Booking Agent creates a confirmed booking record.
+11. Follow-Up Agent generates a deterministic notification schedule plus guarded LLM-generated copy.
+12. Final response returns booking, follow-up plan, trace, and ranked provider payload.

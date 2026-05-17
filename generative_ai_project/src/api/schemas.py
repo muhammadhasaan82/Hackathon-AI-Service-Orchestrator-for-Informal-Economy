@@ -45,7 +45,7 @@ class BookingInfo(BaseModel):
     service_type: str
     location: str
     scheduled_time: str
-    status: str
+    status: str = Field(..., description="PENDING | CONFIRMED | IN_PROGRESS | COMPLETED | CANCELLED")
     price_range: Optional[str] = None
     provider_phone: Optional[str] = None
     provider_email: Optional[str] = None
@@ -54,7 +54,13 @@ class BookingInfo(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     session_id: str
-    status: str
+    status: str = Field(
+        ...,
+        description=(
+            "awaiting_booking_confirmation | booking_confirmed | booking_cancelled | "
+            "needs_clarification | human_handoff_recommended | no_results | input_rejected | error"
+        ),
+    )
     agent_trace: list[dict] = Field(default_factory=list)
     booking: Optional[dict] = None
     followup: Optional[dict] = Field(
@@ -139,7 +145,7 @@ class CreateBookingRequest(BaseModel):
 class UpdateBookingRequest(BaseModel):
     scheduled_time: Optional[str] = None
     user_notes: Optional[str] = None
-    status: Optional[str] = Field(None, description="CONFIRMED | CANCELLED")
+    status: Optional[str] = Field(None, description="PENDING | CONFIRMED | IN_PROGRESS | COMPLETED | CANCELLED")
 
 
 class BookingListResponse(BaseModel):
@@ -195,7 +201,7 @@ class HealthResponse(BaseModel):
     version: str
     vector_store_count: int
     uptime_seconds: float
-    services: Optional[dict] = None
+    services: Optional[dict[str, bool]] = None
 
 
 # ═══════════════════════════════════════════════════════════════

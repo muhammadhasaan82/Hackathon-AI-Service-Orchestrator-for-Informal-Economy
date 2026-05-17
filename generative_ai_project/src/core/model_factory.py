@@ -121,6 +121,7 @@ def load_all_configs() -> dict:
         "agents": _load_yaml("agents_config.yaml"),
         "scoring": _load_yaml("scoring_config.yaml"),
         "prompts": _load_yaml("prompts_config.yaml"),
+        "guardrails": _load_yaml("guardrails_config.yaml"),
         "logging": _load_yaml("logging_config.yaml"),
     }
     # Optional configs

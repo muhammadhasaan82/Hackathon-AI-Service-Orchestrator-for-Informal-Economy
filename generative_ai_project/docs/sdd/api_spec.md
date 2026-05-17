@@ -10,6 +10,13 @@
 ### POST /chat
 Main conversational endpoint. Mobile app sends user messages here.
 
+The guarded flow is multi-turn:
+
+1. user asks for a service
+2. API returns ranked options and `awaiting_booking_confirmation`
+3. user confirms a specific option in the same session
+4. API returns `booking_confirmed` with booking and follow-up payloads
+
 **Request:**
 ```json
 {
@@ -25,12 +32,28 @@ Main conversational endpoint. Mobile app sends user messages here.
 {
   "response": "...",
   "session_id": "uuid",
-  "status": "booking_confirmed | needs_clarification | no_results | error",
+  "status": "awaiting_booking_confirmation | booking_confirmed | booking_cancelled | needs_clarification | human_handoff_recommended | no_results | input_rejected | error",
   "agent_trace": [...],
   "booking": {...},
+  "followup": {...},
   "providers": [...],
   "intent": {...},
   "latency_ms": 1234.56
+}
+```
+
+**Example first-turn response semantics:**
+
+- `awaiting_booking_confirmation`: ranked providers are ready and booking has not yet been created
+- `providers`: top shortlisted providers with deterministic score breakdowns
+- `booking`: `null`
+
+**Example confirmation message:**
+
+```json
+{
+  "session_id": "same-session-id",
+  "message": "book option 1"
 }
 ```
 
@@ -97,6 +120,8 @@ Find providers near GPS coordinates. Used by Nearby screen.
 
 ### POST /bookings
 Create booking from provider detail "Book Now" button.
+
+This endpoint is explicit and deterministic. Unlike `/chat`, it does not require a separate conversational confirmation turn because the caller is already making a direct booking action.
 
 **Request:**
 ```json
@@ -177,7 +202,7 @@ System health check with service status.
   "vector_store_count": 50000,
   "uptime_seconds": 3600.0,
   "services": {
-    "ollama": true,
+    "llm": true,
     "weaviate": true,
     "session_store": true,
     "booking_store": true

@@ -18,11 +18,12 @@ logger = logging.getLogger("agents.intent")
 class IntentAgent:
     """Extracts structured intent from natural language input."""
 
-    def __init__(self, llm: BaseLLM, prompts_config: dict, agents_config: dict):
+    def __init__(self, llm: BaseLLM, prompts_config: dict, agents_config: dict, guardrails=None):
         self.llm = llm
         self.prompt_template = prompts_config.get("intent_extraction", "")
         self.config = agents_config.get("agents", {}).get("intent", {})
         self.confidence_threshold = self.config.get("confidence_threshold", 0.70)
+        self.guardrails = guardrails
 
     async def extract_intent(
         self,
@@ -43,16 +44,42 @@ class IntentAgent:
             cities=", ".join(cities),
         )
 
+        if conversation_history:
+            history = conversation_history[-4:]
+            history_text = "\n".join(
+                f"{turn.get('role', 'user').title()}: {turn.get('content', '')[:200]}"
+                for turn in history
+                if turn.get("content")
+            )
+            if history_text:
+                prompt = f"{prompt}\n\nConversation history:\n{history_text}"
+
         logger.info(f"Extracting intent from: '{user_message}'")
+
+        system_instruction = (
+            "You are an expert intent parser for a service booking system in Pakistan. "
+            "You understand English, Urdu, and Roman Urdu (romanized Urdu). "
+            "Always return valid JSON with the required fields."
+        )
+        if self.guardrails:
+            system_instruction = self.guardrails.compose_system_instruction("intent", system_instruction)
 
         response = await self.llm.generate_structured(
             prompt=prompt,
-            response_schema={},
-            system_instruction=(
-                "You are an expert intent parser for a service booking system in Pakistan. "
-                "You understand English, Urdu, and Roman Urdu (romanized Urdu). "
-                "Always return valid JSON with the required fields."
-            ),
+            response_schema={
+                "type": "object",
+                "properties": {
+                    "service_type": {"type": ["string", "null"]},
+                    "city": {"type": ["string", "null"]},
+                    "area": {"type": ["string", "null"]},
+                    "time_preference": {"type": ["string", "null"]},
+                    "urgency": {"type": ["string", "null"]},
+                    "language_detected": {"type": ["string", "null"]},
+                    "price_preference": {"type": ["string", "null"]},
+                    "confidence": {"type": ["object", "null"]},
+                },
+            },
+            system_instruction=system_instruction,
         )
 
         try:

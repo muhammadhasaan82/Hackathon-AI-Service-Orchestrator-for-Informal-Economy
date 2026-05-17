@@ -69,6 +69,8 @@ async def chat(request: ChatRequest):
     result = await _orchestrator.process_message(
         session_id=session_id,
         user_message=request.message,
+        user_lat=request.user_lat,
+        user_lon=request.user_lon,
     )
 
     return ChatResponse(
@@ -329,6 +331,7 @@ async def create_booking(request: CreateBookingRequest):
         location=request.location,
         scheduled_time=request.scheduled_time,
         user_notes=request.user_notes,
+        status="CONFIRMED",
     )
 
     return booking

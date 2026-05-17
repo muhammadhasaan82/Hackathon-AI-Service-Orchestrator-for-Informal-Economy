@@ -32,12 +32,14 @@ class RankingAgent:
         scoring_config: dict,
         prompts_config: dict,
         agents_config: dict,
+        guardrails=None,
     ):
         self.llm = llm
         self.scoring_config = scoring_config
         self.prompts_config = prompts_config
         self.config = agents_config.get("agents", {}).get("ranking", {})
         self.top_n = self.config.get("top_n", 3)
+        self.guardrails = guardrails
 
     async def rank(
         self,
@@ -142,12 +144,16 @@ class RankingAgent:
             response_language=response_lang,
         )
 
+        system_instruction = (
+            "You are a helpful service recommendation assistant. "
+            "Explain your rankings clearly and concisely. "
+            "Focus on why each provider is a good match."
+        )
+        if self.guardrails:
+            system_instruction = self.guardrails.compose_system_instruction("ranking", system_instruction)
+
         response = await self.llm.generate(
             prompt=prompt,
-            system_instruction=(
-                "You are a helpful service recommendation assistant. "
-                "Explain your rankings clearly and concisely. "
-                "Focus on why each provider is a good match."
-            ),
+            system_instruction=system_instruction,
         )
-        return response.text
+        return self.guardrails.sanitize_text(response.text) if self.guardrails else response.text
