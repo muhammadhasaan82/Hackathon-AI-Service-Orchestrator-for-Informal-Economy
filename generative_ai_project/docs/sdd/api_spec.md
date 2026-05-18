@@ -78,7 +78,7 @@ Search and filter providers. Used by Browse/Search screens.
   "sort_by": "score | rating | distance | price",
   "user_lat": 24.8607,
   "user_lon": 67.0011,
-  "top_n": 10,
+  "top_n": 5,
   "page": 1
 }
 ```
@@ -103,10 +103,17 @@ Search and filter providers. Used by Browse/Search screens.
   ],
   "total": 150,
   "page": 1,
-  "per_page": 10,
+  "per_page": 5,
   "has_next": true
 }
 ```
+
+### GET /providers
+List/search providers with query parameters. This is the browse-friendly GET
+alias for `/providers/search`.
+
+Example:
+`/providers?service_type=Plumber&city=Karachi&area=DHA&limit=5&page=1`
 
 ### GET /providers/{provider_id}
 Full provider detail. Used by Provider Detail screen.

@@ -8,8 +8,10 @@ Phase 3: Cross-encoder reranking for precision
 
 import logging
 import math
+import time
 from typing import Optional
 
+from ..core.runtime_config import env_bool, env_int
 from .embedder import embed_query
 from .vector_store import WeaviateVectorStore
 from .reranker import rerank
@@ -83,9 +85,12 @@ class ProviderRetriever:
         logger.info(f"Retriever search: query='{search_query}' category={category} city={city}")
 
         # ── Phase 1+2: Weaviate hybrid search (metadata filter + vector) ──
+        embedding_start = time.time()
         query_embedding = embed_query(search_query)
-        coarse_k = self.reranking_config.get("top_k_input", 50)
+        logger.info("Timing embedding=%.1fms", (time.time() - embedding_start) * 1000)
+        coarse_k = env_int("RAG_TOP_K_INPUT", self.reranking_config.get("top_k_input", 50))
 
+        vector_start = time.time()
         results = self.vector_store.hybrid_search(
             query_embedding=query_embedding.tolist(),
             category=category,
@@ -95,16 +100,18 @@ class ProviderRetriever:
             price_range=price_range,
             n_results=coarse_k,
         )
+        logger.info("Timing vector_search=%.1fms results=%s", (time.time() - vector_start) * 1000, len(results))
 
         # Add retrieval scores
         for result in results:
             result["retrieval_score"] = 1.0 - result.get("distance", 0.0)
 
         # ── Phase 3: Cross-encoder reranking ──────────────────────────────
-        rerank_enabled = self.reranking_config.get("enabled", True)
-        rerank_top_n = self.reranking_config.get("top_n_output", 10)
+        rerank_enabled = env_bool("RERANK_RESULTS", False)
+        rerank_top_n = env_int("RERANK_TOP_N_OUTPUT", self.reranking_config.get("top_n_output", 10))
 
         if rerank_enabled and len(results) > 1:
+            rerank_start = time.time()
             rerank_model = self.reranking_config.get("model_name", "BAAI/bge-reranker-base")
             rerank_device = self.reranking_config.get("device", "cpu")
 
@@ -116,8 +123,10 @@ class ProviderRetriever:
                 model_name=rerank_model,
                 device=rerank_device,
             )
+            logger.info("Timing rerank=%.1fms results=%s", (time.time() - rerank_start) * 1000, len(results))
         else:
             results = results[:n_results]
+            logger.info("Timing rerank=0.0ms skipped=%s", not rerank_enabled)
 
         # Enrich with distance if user coordinates provided
         # THREADING: Distance calculation for each result is independent

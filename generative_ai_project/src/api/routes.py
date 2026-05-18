@@ -48,7 +48,7 @@ def set_dependencies(orchestrator, vector_store, session_store, start_time):
 
 def _check_init():
     if _orchestrator is None:
-        raise HTTPException(503, detail="System not initialized. Ensure Unsloth model is loaded and Weaviate is running.")
+        raise HTTPException(503, detail="System not initialized. Ensure the configured model backend and Weaviate are running.")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -100,6 +100,7 @@ async def search_providers(request: ProviderSearchRequest):
     and sorting by score, rating, distance, or price.
     """
     _check_init()
+    start_time = time.time()
     from ..rag.embedder import embed_query
 
     # Build search query from filters
@@ -114,9 +115,12 @@ async def search_providers(request: ProviderSearchRequest):
         search_parts.append(request.area)
 
     search_query = " ".join(search_parts) if search_parts else "service provider"
+    embed_start = time.time()
     query_embedding = embed_query(search_query)
+    logger.info("Timing provider_search_embedding=%.1fms", (time.time() - embed_start) * 1000)
 
     # Search Weaviate
+    search_start = time.time()
     results = _vector_store.hybrid_search(
         query_embedding=query_embedding.tolist(),
         category=request.category,
@@ -126,6 +130,7 @@ async def search_providers(request: ProviderSearchRequest):
         availability=[request.availability] if request.availability else None,
         n_results=request.top_n * request.page,
     )
+    logger.info("Timing provider_search_vector=%.1fms results=%s", (time.time() - search_start) * 1000, len(results))
 
     # Post-processing filters
     filtered = results
@@ -184,16 +189,50 @@ async def search_providers(request: ProviderSearchRequest):
             "score": r.get("rerank_score", r.get("retrieval_score", 0)),
         })
 
-    return ProviderListResponse(
+    response = ProviderListResponse(
         providers=providers,
         total=len(filtered),
         page=request.page,
         per_page=per_page,
         has_next=start + per_page < len(filtered),
     )
+    logger.info("Timing provider_search_total=%.1fms returned=%s", (time.time() - start_time) * 1000, len(providers))
+    return response
 
 
-@router.get("/providers/{provider_id}")
+@router.get("/providers", response_model=ProviderListResponse)
+async def list_providers(
+    service_type: Optional[str] = Query(None, description="Filter by service category"),
+    category: Optional[str] = Query(None, description="Filter by service category"),
+    city: Optional[str] = Query(None, description="Filter by city"),
+    area: Optional[str] = Query(None, description="Filter by area"),
+    query: Optional[str] = Query(None, description="Free-text search query"),
+    limit: int = Query(5, ge=1, le=50, description="Number of providers to return"),
+    page: int = Query(1, ge=1, description="Page number"),
+    min_rating: Optional[float] = Query(None, ge=0.0, le=5.0),
+    verified_only: bool = Query(False),
+    sort_by: Optional[str] = Query("score", description="score | rating | distance | price"),
+    user_lat: Optional[float] = Query(None),
+    user_lon: Optional[float] = Query(None),
+):
+    effective_category = category or service_type
+    request = ProviderSearchRequest(
+        category=effective_category,
+        city=city,
+        area=area,
+        query=query,
+        min_rating=min_rating,
+        verified_only=verified_only,
+        sort_by=sort_by,
+        user_lat=user_lat,
+        user_lon=user_lon,
+        top_n=limit,
+        page=page,
+    )
+    return await search_providers(request)
+
+
+@router.get("/providers/{provider_id:int}")
 async def get_provider_detail(provider_id: int):
     """
     Get detailed information about a specific provider.
@@ -519,9 +558,7 @@ async def get_cities():
     Mobile app uses this for city/area dropdowns.
     """
     _check_init()
-    from ..processing.preprocessor import load_providers
-
-    df = load_providers()
+    df = _orchestrator.providers_df
     cities_data = []
     for city in _orchestrator.cities:
         city_df = df[df["city"].str.lower() == city.lower()]
@@ -543,9 +580,7 @@ async def get_city_areas(city_name: str):
     Mobile app uses this when user selects a city for area auto-complete.
     """
     _check_init()
-    from ..processing.preprocessor import load_providers
-
-    df = load_providers()
+    df = _orchestrator.providers_df
     city_df = df[df["city"].str.lower() == city_name.lower()]
 
     if city_df.empty:

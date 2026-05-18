@@ -18,6 +18,7 @@ import time
 from typing import Optional
 
 from ..core.base_llm import BaseLLM
+from ..core.runtime_config import consume_llm_call_budget, env_bool, env_int
 from .tools import batch_score_providers, format_provider_summary
 
 logger = logging.getLogger("agents.ranking")
@@ -33,13 +34,15 @@ class RankingAgent:
         prompts_config: dict,
         agents_config: dict,
         guardrails=None,
+        cag_manager=None,
     ):
         self.llm = llm
         self.scoring_config = scoring_config
         self.prompts_config = prompts_config
         self.config = agents_config.get("agents", {}).get("ranking", {})
-        self.top_n = self.config.get("top_n", 3)
+        self.top_n = env_int("TOP_K_RESULTS", self.config.get("top_n", 3))
         self.guardrails = guardrails
+        self.cag_manager = cag_manager
 
     async def rank(
         self,
@@ -99,8 +102,19 @@ class RankingAgent:
 
         top_providers = qualified[:self.top_n]
 
-        # Step 3: Generate LLM reasoning
-        reasoning = await self._generate_reasoning(top_providers, intent)
+        # Step 3: Generate ranking reasoning only when enabled.
+        reasoning_start = time.time()
+        if env_bool("ENABLE_LLM_RANKING_REASONING", False) and consume_llm_call_budget("ranking.reasoning"):
+            reasoning = await self._generate_reasoning(top_providers, intent)
+            reasoning_mode = "llm"
+        else:
+            reasoning = self._deterministic_reasoning(top_providers, intent)
+            reasoning_mode = "deterministic"
+        logger.info(
+            "Ranking reasoning completed in %.1fms | mode=%s",
+            (time.time() - reasoning_start) * 1000,
+            reasoning_mode,
+        )
 
         logger.info(
             f"Ranked {len(scored)} candidates → top {len(top_providers)} "
@@ -112,6 +126,22 @@ class RankingAgent:
             "reasoning": reasoning,
             "total_evaluated": len(scored),
         }
+
+    def _deterministic_reasoning(self, providers: list[dict], intent: dict) -> str:
+        if not providers:
+            return "I could not find enough matching providers for this request."
+
+        lines = ["I ranked these providers using deterministic scoring: rating, distance, availability, experience, completed jobs, verification, and price fit."]
+        for i, provider in enumerate(providers, 1):
+            meta = provider.get("metadata", provider)
+            score = provider.get("score_result", {}).get("composite_score", 0)
+            breakdown = provider.get("score_result", {}).get("breakdown", {})
+            strengths = sorted(breakdown.items(), key=lambda item: item[1], reverse=True)[:3] if isinstance(breakdown, dict) else []
+            strengths_text = ", ".join(f"{k}={v:.2f}" for k, v in strengths if isinstance(v, (int, float))) or "balanced score"
+            lines.append(
+                f"{i}. {meta.get('provider_name', 'Provider')} scored {score:.2f}; strongest signals: {strengths_text}."
+            )
+        return "\n".join(lines)
 
     async def _generate_reasoning(self, providers: list[dict], intent: dict) -> str:
         """Use LLM to generate natural language reasoning for the rankings."""
@@ -151,9 +181,24 @@ class RankingAgent:
         )
         if self.guardrails:
             system_instruction = self.guardrails.compose_system_instruction("ranking", system_instruction)
+        system_instruction = self._with_cag("ranking", system_instruction)
 
         response = await self.llm.generate(
             prompt=prompt,
             system_instruction=system_instruction,
         )
         return self.guardrails.sanitize_text(response.text) if self.guardrails else response.text
+
+    def _with_cag(self, agent_name: str, system_instruction: str) -> str:
+        if not self.cag_manager:
+            return system_instruction
+        context = self.cag_manager.get_context_for_agent(agent_name)
+        logger.info(
+            "CAG injection for %s ranking LLM call | injected=%s chars=%s",
+            agent_name,
+            bool(context),
+            len(context),
+        )
+        if not context:
+            return system_instruction
+        return f"{system_instruction}\n\n## DOMAIN KNOWLEDGE\n{context}"

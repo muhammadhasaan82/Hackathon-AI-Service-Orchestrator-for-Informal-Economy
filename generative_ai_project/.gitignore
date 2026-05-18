@@ -29,7 +29,9 @@ secrets/
 
 # 3. Cache and Ephemeral Data
 # ------------------------------------------------------------------------------
-data/cache/
+data/cache/*
+!data/cache/
+!data/cache/golden_knowledge.yaml
 *.db
 *.sqlite
 *.sqlite3

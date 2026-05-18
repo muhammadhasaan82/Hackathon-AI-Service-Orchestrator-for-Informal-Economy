@@ -92,7 +92,7 @@ class ProviderSearchRequest(BaseModel):
     sort_by: Optional[str] = Field("score", description="score | rating | distance | price")
     user_lat: Optional[float] = None
     user_lon: Optional[float] = None
-    top_n: int = Field(10, ge=1, le=50)
+    top_n: int = Field(5, ge=1, le=50)
     page: int = Field(1, ge=1, description="Page number for pagination")
 
 

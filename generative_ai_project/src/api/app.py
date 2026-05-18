@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ..core.model_factory import get_model, load_all_configs
 from ..core.concurrency import shutdown_executor
+from ..core.runtime_config import env_bool
 from ..rag.vector_store import WeaviateVectorStore
 from ..rag.indexer import index_providers
 from ..state.session_store import SessionStore
@@ -51,6 +52,34 @@ async def lifespan(app: FastAPI):
 
     # Load all configs
     configs = load_all_configs()
+
+    # Preload embedding/reranker models when configured.
+    embedding_cfg = configs["model"].get("embedding", {})
+    try:
+        from ..rag.embedder import _get_model as _get_embedding_model
+        preload_start = time.time()
+        _get_embedding_model(
+            model_name=embedding_cfg.get("model_name", "BAAI/bge-m3"),
+            device=embedding_cfg.get("device", "cpu"),
+        )
+        logger.info("Embedding model preloaded in %.1fs", time.time() - preload_start)
+    except Exception as e:
+        logger.warning(f"Embedding model preload skipped/failed: {e}")
+
+    reranking_cfg = configs["model"].get("reranking", {})
+    if env_bool("RERANK_RESULTS", False):
+        try:
+            from ..rag.reranker import _get_reranker
+            preload_start = time.time()
+            _get_reranker(
+                model_name=reranking_cfg.get("model_name", "BAAI/bge-reranker-base"),
+                device=reranking_cfg.get("device", "cpu"),
+            )
+            logger.info("Reranker model preloaded in %.1fs", time.time() - preload_start)
+        except Exception as e:
+            logger.warning(f"Reranker preload skipped/failed: {e}")
+    else:
+        logger.info("Reranker preload skipped because RERANK_RESULTS=false")
 
     # Initialize LLM. Backend selected by MODEL_BACKEND env var:
     #   transformers (default, CPU-safe) | ollama (recommended on CPU VMs) | unsloth (GPU)

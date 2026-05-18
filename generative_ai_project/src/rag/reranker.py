@@ -6,6 +6,7 @@ with a cross-encoder for higher precision ranking.
 """
 
 import logging
+import os
 from typing import Optional
 
 import numpy as np
@@ -19,6 +20,7 @@ _reranker = None
 def _get_reranker(model_name: str = "BAAI/bge-reranker-base", device: str = "cpu"):
     """Lazy-load the cross-encoder reranker model."""
     global _reranker
+    model_name = os.getenv("RERANKER_MODEL", model_name)
     if _reranker is None:
         from sentence_transformers import CrossEncoder
         logger.info(f"Loading reranker model: {model_name} on {device}")

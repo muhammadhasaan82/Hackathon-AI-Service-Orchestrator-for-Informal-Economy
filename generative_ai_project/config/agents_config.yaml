@@ -69,7 +69,7 @@ agents:
       - "composite_scoring"
       - "reasoning_generation"
       - "top_n_selection"
-    top_n: 3                       # number of recommendations to show
+    top_n: 5                       # number of recommendations to show
 
   booking:
     name: "Booking Simulation Agent"

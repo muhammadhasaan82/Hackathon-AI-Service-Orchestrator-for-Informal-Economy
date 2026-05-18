@@ -6,6 +6,7 @@ embedding generation and vector store indexing.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -14,16 +15,35 @@ import pandas as pd
 logger = logging.getLogger("processing.preprocessor")
 
 # Default dataset path — relative to project root
-_DEFAULT_CSV = Path(__file__).parent.parent.parent.parent / "service_providers_50000.csv"
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+_DEFAULT_CSV = _PROJECT_ROOT / "dataset" / "service_providers_50000.csv"
+_LEGACY_DEFAULT_CSV = _PROJECT_ROOT.parent / "service_providers_50000.csv"
+_PROVIDER_CACHE: dict[str, pd.DataFrame] = {}
 
 
-def load_providers(csv_path: Optional[str] = None) -> pd.DataFrame:
+def _resolve_provider_path(csv_path: Optional[str] = None) -> Path:
+    if csv_path:
+        return Path(csv_path)
+    env_path = os.getenv("PROVIDERS_CSV_PATH")
+    if env_path:
+        return Path(env_path)
+    if _DEFAULT_CSV.exists():
+        return _DEFAULT_CSV
+    return _LEGACY_DEFAULT_CSV
+
+
+def load_providers(csv_path: Optional[str] = None, force_reload: bool = False) -> pd.DataFrame:
     """
     Load and clean the service providers dataset.
 
     Returns a normalized DataFrame with consistent types.
     """
-    path = Path(csv_path) if csv_path else _DEFAULT_CSV
+    path = _resolve_provider_path(csv_path)
+    cache_key = str(path.resolve()) if path.exists() else str(path)
+    if not force_reload and cache_key in _PROVIDER_CACHE:
+        logger.debug(f"Using cached providers dataframe: {cache_key}")
+        return _PROVIDER_CACHE[cache_key]
+
     logger.info(f"Loading providers from: {path}")
 
     df = pd.read_csv(path, encoding="utf-8")
@@ -64,6 +84,7 @@ def load_providers(csv_path: Optional[str] = None) -> pd.DataFrame:
         logger.warning(f"Dropped {before - len(df)} rows with missing critical fields")
 
     logger.info(f"Preprocessed {len(df)} providers | {df['category'].nunique()} categories | {df['city'].nunique()} cities")
+    _PROVIDER_CACHE[cache_key] = df
     return df
 
 

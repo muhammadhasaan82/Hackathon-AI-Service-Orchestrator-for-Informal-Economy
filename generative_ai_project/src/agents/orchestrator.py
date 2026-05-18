@@ -7,11 +7,13 @@ Integrates: Agentic RAG + Reranking + CAG + Context Engineering + OpenTelemetry
 
 import json
 import logging
+import re
 import time
 from typing import Optional
 
 from ..core.base_llm import BaseLLM
 from ..core.model_factory import load_all_configs
+from ..core.runtime_config import reset_llm_call_budget
 from ..rag.retriever import ProviderRetriever
 from ..rag.vector_store import WeaviateVectorStore
 from ..state.session_store import SessionStore
@@ -29,6 +31,11 @@ from .followup_agent import FollowUpAgent
 from .tools import format_provider_summary
 
 logger = logging.getLogger("agents.orchestrator")
+
+_SIMPLE_GREETINGS = {
+    "hi", "hello", "hey", "salam", "salaam", "assalamualaikum",
+    "assalamu alaikum", "asalam o alaikum", "aoa",
+}
 
 
 class Orchestrator:
@@ -58,19 +65,19 @@ class Orchestrator:
         self.context_engine = ContextEngine(prompts)
 
         # Load dataset metadata
-        df = load_providers()
-        self.service_categories = get_service_categories(df)
-        self.cities = get_cities(df)
+        self.providers_df = load_providers()
+        self.service_categories = get_service_categories(self.providers_df)
+        self.cities = get_cities(self.providers_df)
 
         # Initialize retriever with full config for reranking
         retriever = ProviderRetriever(vector_store, self.configs)
 
         # Initialize sub-agents
-        self.intent_agent = IntentAgent(llm, prompts, agents_cfg, guardrails=self.guardrails)
+        self.intent_agent = IntentAgent(llm, prompts, agents_cfg, guardrails=self.guardrails, cag_manager=self.cag_manager)
         self.discovery_agent = DiscoveryAgent(retriever, agents_cfg)
-        self.ranking_agent = RankingAgent(llm, scoring, prompts, agents_cfg, guardrails=self.guardrails)
-        self.booking_agent = BookingAgent(llm, self.booking_store, prompts, agents_cfg, guardrails=self.guardrails)
-        self.followup_agent = FollowUpAgent(llm, self.booking_store, prompts, agents_cfg, guardrails=self.guardrails)
+        self.ranking_agent = RankingAgent(llm, scoring, prompts, agents_cfg, guardrails=self.guardrails, cag_manager=self.cag_manager)
+        self.booking_agent = BookingAgent(llm, self.booking_store, prompts, agents_cfg, guardrails=self.guardrails, cag_manager=self.cag_manager)
+        self.followup_agent = FollowUpAgent(llm, self.booking_store, prompts, agents_cfg, guardrails=self.guardrails, cag_manager=self.cag_manager)
 
         logger.info(
             f"Orchestrator initialized | {len(self.service_categories)} categories | "
@@ -100,6 +107,25 @@ class Orchestrator:
     def _return_payload(self, payload: dict) -> dict:
         return self.guardrails.sanitize_payload(payload) if self.guardrails else payload
 
+    def _log_response_generation(self, start: float, status: str, response_text: str) -> None:
+        logger.info(
+            "Timing response_generation=%.1fms status=%s chars=%s",
+            (time.time() - start) * 1000,
+            status,
+            len(response_text or ""),
+        )
+
+    def _is_simple_greeting(self, user_message: str) -> bool:
+        normalized = re.sub(r"[^\w\s]", "", (user_message or "").strip().lower())
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized in _SIMPLE_GREETINGS
+
+    def _greeting_clarification(self, user_message: str) -> str:
+        lowered = (user_message or "").lower()
+        if "salam" in lowered or "aoa" in lowered:
+            return "Wa alaikum salam! Aap ko kis service ki zaroorat hai aur kis city/area mein?"
+        return "Hi! Please tell me what service you need and your city/area."
+
     async def process_message(
         self,
         session_id: str,
@@ -109,6 +135,7 @@ class Orchestrator:
     ) -> dict:
         """Process a user message through the full agentic pipeline."""
         start_time = time.time()
+        reset_llm_call_budget()
         trace = []
         followup_result = None
 
@@ -126,7 +153,9 @@ class Orchestrator:
                     "result": {"policy": input_guardrail.get("policy")},
                 })
                 self.session_store.add_trace(session_id, "guardrails", "evaluate_input", input_guardrail)
+                response_start = time.time()
                 response_text = self.guardrails.sanitize_text(input_guardrail.get("message"))
+                self._log_response_generation(response_start, input_guardrail.get("status", "input_rejected"), response_text)
                 self.session_store.add_turn(session_id, "assistant", response_text)
                 return self._return_payload({
                     "response": response_text,
@@ -136,6 +165,25 @@ class Orchestrator:
                     "providers": self._provider_payload(session.get("agent_state", {}).get("ranked_providers")),
                     "intent": session.get("agent_state", {}).get("intent"),
                     "latency_ms": (time.time() - start_time) * 1000,
+                })
+
+            if self._is_simple_greeting(user_message):
+                response_start = time.time()
+                response_text = self.guardrails.sanitize_text(self._greeting_clarification(user_message))
+                self._log_response_generation(response_start, "needs_clarification", response_text)
+                self.session_store.add_turn(session_id, "assistant", response_text)
+                latency_ms = (time.time() - start_time) * 1000
+                logger.info("Greeting handled without LLM in %.1fms", latency_ms)
+                return self._return_payload({
+                    "response": response_text,
+                    "agent_trace": [
+                        {"agent": "orchestrator", "action": "greeting_short_circuit", "status": "done"}
+                    ],
+                    "session_id": session_id,
+                    "status": "needs_clarification",
+                    "providers": self._provider_payload(session.get("agent_state", {}).get("ranked_providers")),
+                    "intent": session.get("agent_state", {}).get("intent"),
+                    "latency_ms": latency_ms,
                 })
 
             agent_state = session.get("agent_state", {})
@@ -149,7 +197,9 @@ class Orchestrator:
                 if resolution.get("action") == "reject":
                     session["agent_state"]["awaiting_booking_confirmation"] = False
                     self.session_store.save_session(session_id, session)
+                    response_start = time.time()
                     response_text = self.guardrails.sanitize_text(self.guardrails.rejection_message())
+                    self._log_response_generation(response_start, "booking_cancelled", response_text)
                     self.session_store.add_turn(session_id, "assistant", response_text)
                     return self._return_payload({
                         "response": response_text,
@@ -212,6 +262,7 @@ class Orchestrator:
                     session["agent_state"]["awaiting_booking_confirmation"] = False
                     self.session_store.save_session(session_id, session)
 
+                    response_start = time.time()
                     selected_summary = format_provider_summary(selected_provider, selected_provider.get("score_result"))
                     response_text = (
                         f"{'═' * 40}\n"
@@ -229,6 +280,11 @@ class Orchestrator:
                         )
 
                     response_text = self.guardrails.sanitize_text(response_text)
+                    self._log_response_generation(
+                        response_start,
+                        self.guardrails.booking_status("booking_confirmed", "booking_confirmed"),
+                        response_text,
+                    )
                     self.session_store.add_turn(session_id, "assistant", response_text)
                     return self._return_payload({
                         "response": response_text,
@@ -243,11 +299,17 @@ class Orchestrator:
                     })
 
                 if resolution.get("action") in ("confirm_ambiguous", "missing_context"):
+                    response_start = time.time()
                     top_score = ranked_providers[0].get("score_result", {}).get("composite_score") if ranked_providers else None
                     response_text = self.guardrails.missing_selection_message()
                     if resolution.get("action") == "confirm_ambiguous":
                         response_text = self.guardrails.confirmation_prompt(len(ranked_providers[:3]), top_score)
                     response_text = self.guardrails.sanitize_text(response_text)
+                    self._log_response_generation(
+                        response_start,
+                        self.guardrails.booking_status("recommendation_ready", "awaiting_booking_confirmation"),
+                        response_text,
+                    )
                     self.session_store.add_turn(session_id, "assistant", response_text)
                     return self._return_payload({
                         "response": response_text,
@@ -260,6 +322,7 @@ class Orchestrator:
                     })
 
             with trace_span("intent.extract", {"user_message": user_message[:200]}) as span:
+                phase_start = time.time()
                 trace.append({"agent": "intent", "action": "extract_intent", "status": "running"})
                 intent = await self.intent_agent.extract_intent(
                     user_message=user_message,
@@ -287,8 +350,10 @@ class Orchestrator:
                     "area": intent.get("area"),
                 }
                 self.session_store.add_trace(session_id, "intent", "extract_intent", trace[-1]["result"])
+                logger.info("Timing intent=%.1fms", (time.time() - phase_start) * 1000)
 
             if intent_review.get("should_escalate"):
+                response_start = time.time()
                 handoff_message = (
                     self.configs.get("agents", {})
                     .get("agents", {})
@@ -297,6 +362,7 @@ class Orchestrator:
                     .get("human_handoff_message", "I want to be accurate, so I recommend a human operator review this request.")
                 )
                 handoff_message = self.guardrails.sanitize_text(handoff_message)
+                self._log_response_generation(response_start, "human_handoff_recommended", handoff_message)
                 self.session_store.add_turn(session_id, "assistant", handoff_message)
                 return self._return_payload({
                     "response": handoff_message,
@@ -308,8 +374,10 @@ class Orchestrator:
                 })
 
             if intent.get("needs_clarification"):
+                response_start = time.time()
                 clarification = self.intent_agent.get_clarification_message(intent["needs_clarification"], self.configs["prompts"])
                 clarification = self.guardrails.sanitize_text(clarification)
+                self._log_response_generation(response_start, "needs_clarification", clarification)
                 trace.append({"agent": "intent", "action": "ask_clarification", "fields": intent["needs_clarification"]})
                 self.session_store.add_turn(session_id, "assistant", clarification)
                 return self._return_payload({
@@ -322,6 +390,7 @@ class Orchestrator:
                 })
 
             with trace_span("discovery.search", {"category": intent.get("service_type"), "city": intent.get("city")}) as span:
+                phase_start = time.time()
                 trace.append({"agent": "discovery", "action": "search_providers", "status": "running"})
                 candidates = await self.discovery_agent.discover(
                     intent=intent,
@@ -331,10 +400,13 @@ class Orchestrator:
                 trace[-1]["status"] = "done"
                 trace[-1]["result"] = {"candidates_found": len(candidates)}
                 self.session_store.add_trace(session_id, "discovery", "search", {"count": len(candidates)})
+                logger.info("Timing retrieval=%.1fms candidates=%s", (time.time() - phase_start) * 1000, len(candidates))
 
             if not candidates:
+                response_start = time.time()
                 msg = "I couldn't find any providers matching your request. Please try a different service or location."
                 msg = self.guardrails.sanitize_text(msg)
+                self._log_response_generation(response_start, "no_results", msg)
                 self.session_store.add_turn(session_id, "assistant", msg)
                 return self._return_payload({
                     "response": msg,
@@ -346,6 +418,7 @@ class Orchestrator:
                 })
 
             with trace_span("ranking.score", {"candidates": len(candidates)}) as span:
+                phase_start = time.time()
                 trace.append({"agent": "ranking", "action": "rank_providers", "status": "running"})
                 ranking_result = await self.ranking_agent.rank(
                     candidates=candidates,
@@ -367,6 +440,7 @@ class Orchestrator:
                     ],
                 }
                 self.session_store.add_trace(session_id, "ranking", "rank", trace[-1]["result"])
+                logger.info("Timing ranking=%.1fms ranked=%s", (time.time() - phase_start) * 1000, len(ranked_providers))
 
             session["agent_state"]["ranked_providers"] = ranked_providers
             session["agent_state"]["selected_provider"] = ranked_providers[0] if ranked_providers else None
@@ -379,6 +453,7 @@ class Orchestrator:
             providers_payload = self._provider_payload(ranked_providers)
 
             if self.guardrails.booking_mode() == "confirmation_required":
+                response_start = time.time()
                 session["agent_state"]["awaiting_booking_confirmation"] = True
                 self.session_store.save_session(session_id, session)
                 confirmation_prompt = self.guardrails.confirmation_prompt(len(providers_payload), top_score)
@@ -391,6 +466,11 @@ class Orchestrator:
                     f"{confirmation_prompt}\n"
                 )
                 response_text = self.guardrails.sanitize_text(response_text)
+                self._log_response_generation(
+                    response_start,
+                    self.guardrails.booking_status("recommendation_ready", "awaiting_booking_confirmation"),
+                    response_text,
+                )
                 self.session_store.add_turn(session_id, "assistant", response_text)
                 return self._return_payload({
                     "response": response_text,
@@ -448,6 +528,7 @@ class Orchestrator:
             session["agent_state"]["followup"] = followup_result
             self.session_store.save_session(session_id, session)
 
+            response_start = time.time()
             response_text = (
                 f"{reasoning}\n"
                 f"{self._provider_options_text(ranked_providers)}\n"
@@ -467,6 +548,11 @@ class Orchestrator:
                     response_text += f"📅 {len(followup_result['scheduled_reminders'])} reminder(s) scheduled before your appointment.\n"
 
             response_text = self.guardrails.sanitize_text(response_text)
+            self._log_response_generation(
+                response_start,
+                self.guardrails.booking_status("booking_confirmed", "booking_confirmed"),
+                response_text,
+            )
             self.session_store.add_turn(session_id, "assistant", response_text)
             return self._return_payload({
                 "response": response_text,
@@ -483,7 +569,9 @@ class Orchestrator:
         except Exception as e:
             logger.error(f"Pipeline error: {e}", exc_info=True)
             trace.append({"agent": "orchestrator", "action": "error", "error": str(e)})
+            response_start = time.time()
             response_text = self.guardrails.sanitize_text("I encountered an issue processing your request. Please try again.")
+            self._log_response_generation(response_start, "error", response_text)
             return self._return_payload({
                 "response": response_text,
                 "agent_trace": trace,

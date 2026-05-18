@@ -7,6 +7,7 @@ a Python dict if the Rust module isn't compiled.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +16,13 @@ import yaml
 logger = logging.getLogger("cag.manager")
 
 _GOLDEN_KNOWLEDGE_PATH = Path(__file__).parent.parent.parent / "data" / "cache" / "golden_knowledge.yaml"
+_AGENT_SECTIONS = {
+    "intent": ["service_policies", "city_mappings", "emergency_handling", "language_conventions", "safety_guardrails"],
+    "ranking": ["pricing_heuristics", "provider_ranking_rules", "city_mappings", "emergency_handling", "safety_guardrails"],
+    "booking": ["service_policies", "pricing_heuristics", "escalation_rules", "emergency_handling"],
+    "followup": ["service_policies", "emergency_handling", "escalation_rules", "language_conventions"],
+    "orchestrator": ["service_policies", "city_mappings", "emergency_handling", "provider_ranking_rules", "safety_guardrails"],
+}
 
 
 class CAGManager:
@@ -27,6 +35,7 @@ class CAGManager:
 
     def __init__(self, golden_knowledge_path: Optional[str] = None):
         self._cache = self._init_cache()
+        self._entry_sections: dict[str, str] = {}
         self._load_golden_knowledge(golden_knowledge_path)
 
     def _init_cache(self):
@@ -60,12 +69,17 @@ class CAGManager:
         for section, content in data.items():
             if isinstance(content, dict):
                 for key, value in content.items():
-                    entries.append((f"{section}.{key}", str(value)))
+                    cache_key = f"{section}.{key}"
+                    entries.append((cache_key, str(value)))
+                    self._entry_sections[cache_key] = section
             elif isinstance(content, list):
                 for i, item in enumerate(content):
-                    entries.append((f"{section}[{i}]", str(item)))
+                    cache_key = f"{section}[{i}]"
+                    entries.append((cache_key, str(item)))
+                    self._entry_sections[cache_key] = section
             else:
                 entries.append((section, str(content)))
+                self._entry_sections[section] = section
 
         if hasattr(self._cache, "batch_set"):
             count = self._cache.batch_set(entries)
@@ -76,29 +90,83 @@ class CAGManager:
 
         logger.info(f"CAG: Loaded {count} golden knowledge entries")
 
-    def get_context(self, keys: Optional[list[str]] = None, separator: str = "\n") -> str:
+    def get_context(
+        self,
+        keys: Optional[list[str]] = None,
+        separator: str = "\n",
+        max_chars: Optional[int] = None,
+        max_items: Optional[int] = None,
+        sections: Optional[list[str]] = None,
+    ) -> str:
         """
         Get golden knowledge as a context string for LLM injection.
 
         If keys specified, returns only those entries.
         Otherwise, returns all cached knowledge.
         """
+        if os.getenv("ENABLE_CAG", "true").strip().lower() not in ("1", "true", "yes", "on"):
+            return ""
+
         if keys:
             if hasattr(self._cache, "batch_get"):
                 results = self._cache.batch_get(keys)
-                return separator.join(f"[{k}]: {v}" for k, v in results)
+                return self._format_entries(results, separator, max_chars, max_items, sections)
             else:
                 parts = []
                 for key in keys:
                     val = self._cache.get(key)
                     if val:
-                        parts.append(f"[{key}]: {val}")
-                return separator.join(parts)
+                        parts.append((key, val))
+                return self._format_entries(parts, separator, max_chars, max_items, sections)
         else:
-            if hasattr(self._cache, "build_context"):
-                return self._cache.build_context(separator)
+            if hasattr(self._cache, "get_all"):
+                entries = self._cache.get_all()
             else:
-                return self._cache.build_context(separator)
+                entries = []
+            return self._format_entries(entries, separator, max_chars, max_items, sections)
+
+    def get_context_for_agent(self, agent_name: str, separator: str = "\n") -> str:
+        max_chars = int(os.getenv("CAG_MAX_CONTEXT_CHARS", "2500"))
+        max_items = int(os.getenv("CAG_MAX_CONTEXT_ITEMS", "20"))
+        sections = _AGENT_SECTIONS.get(agent_name, _AGENT_SECTIONS.get("orchestrator"))
+        context = self.get_context(
+            separator=separator,
+            max_chars=max_chars,
+            max_items=max_items,
+            sections=sections,
+        )
+        logger.info(
+            "CAG context prepared for %s | sections=%s chars=%s",
+            agent_name,
+            ",".join(sections or []),
+            len(context),
+        )
+        return context
+
+    def _format_entries(
+        self,
+        entries: list[tuple[str, str]],
+        separator: str,
+        max_chars: Optional[int],
+        max_items: Optional[int],
+        sections: Optional[list[str]],
+    ) -> str:
+        allowed_sections = set(sections or [])
+        parts = []
+        current_chars = 0
+        for key, value in entries:
+            section = self._entry_sections.get(key, key.split(".", 1)[0].split("[", 1)[0])
+            if allowed_sections and section not in allowed_sections:
+                continue
+            part = f"[{key}]: {value}"
+            projected = current_chars + len(part) + (len(separator) if parts else 0)
+            if max_items is not None and len(parts) >= max_items:
+                break
+            if max_chars is not None and projected > max_chars:
+                break
+            parts.append(part)
+            current_chars = projected
+        return separator.join(parts)
 
     def set(self, key: str, value: str):
         """Add or update a cache entry."""

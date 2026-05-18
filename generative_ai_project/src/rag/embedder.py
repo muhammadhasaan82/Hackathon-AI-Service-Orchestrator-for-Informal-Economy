@@ -7,6 +7,7 @@ Uses sentence-transformers for local inference.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +22,7 @@ _model = None
 def _get_model(model_name: str = "BAAI/bge-m3", device: str = "cpu"):
     """Lazy-load the embedding model."""
     global _model
+    model_name = os.getenv("EMBEDDING_MODEL", model_name)
     if _model is None:
         from sentence_transformers import SentenceTransformer
         logger.info(f"Loading embedding model: {model_name} on {device}")
