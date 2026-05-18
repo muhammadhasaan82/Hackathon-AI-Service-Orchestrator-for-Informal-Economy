@@ -1,13 +1,32 @@
 # ═══════════════════════════════════════════════════════════════
 # Model Configuration — Fully Open-Source / Self-Hosted
-# Gemma 4 31B via Unsloth. No external inference API required.
+# Default backend is CPU-safe (transformers). Switch via MODEL_BACKEND
+# env var to "ollama" (recommended on CPU-only VMs) or "unsloth" (GPU).
 # ═══════════════════════════════════════════════════════════════
 
 # ── Active Provider ─────────────────────────────────────────
-active_provider: "unsloth"
+# Overridden by MODEL_BACKEND env var at runtime.
+active_provider: "transformers"
 
 # ── Provider Configurations ─────────────────────────────────
 providers:
+  # CPU-safe default. Uses HuggingFace transformers directly so the API
+  # can start on plain CPU-only VMs without CUDA / Unsloth.
+  transformers:
+    model_id: "google/gemma-3-4b-it"
+    device: null                    # null = auto (cuda if available, else cpu)
+    torch_dtype: null               # null = auto (fp16 on cuda, fp32 on cpu)
+    load_in_4bit: false             # only honored on cuda
+    trust_remote_code: false
+    generation_config:
+      temperature: 0.10
+      top_p: 0.80
+      top_k: 30
+      max_output_tokens: 2048
+      max_seq_length: 4096
+    supports_tools: false
+    supports_structured_output: true
+
   unsloth:
     model_id_env: "UNSLOTH_MODEL_ID"
     model_id: "unsloth/gemma-4-31b-it-bnb-4bit"

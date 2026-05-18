@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     start_time = time.time()
     logger.info("═" * 60)
     logger.info("  AI Service Orchestrator — OPEN SOURCE STACK")
-    logger.info("  Gemma 4 31B (Unsloth) + Weaviate + Redis + PostgreSQL")
+    logger.info("  LLM (configurable) + Weaviate + Redis + PostgreSQL")
     logger.info("═" * 60)
 
     # Initialize OpenTelemetry tracing
@@ -52,20 +52,25 @@ async def lifespan(app: FastAPI):
     # Load all configs
     configs = load_all_configs()
 
-    # Initialize LLM (Unsloth — local Gemma 4 31B, in-process)
+    # Initialize LLM. Backend selected by MODEL_BACKEND env var:
+    #   transformers (default, CPU-safe) | ollama (recommended on CPU VMs) | unsloth (GPU)
     llm = get_model()
-    provider = os.getenv("MODEL_PROVIDER", "unsloth")
-    logger.info(f"LLM: {llm.model_id} via {provider} (local, in-process)")
+    backend = (
+        os.getenv("MODEL_BACKEND")
+        or os.getenv("MODEL_PROVIDER")
+        or configs["model"].get("active_provider", "transformers")
+    )
+    logger.info(f"LLM: {llm.model_id} via {backend}")
 
     # Check local model health
     if hasattr(llm, "check_health"):
         if llm.check_health():
-            logger.info(f"{provider} model: ✅ ready")
+            logger.info(f"{backend} model: ✅ ready")
             if hasattr(llm, "list_models"):
                 logger.info(f"Available models: {llm.list_models()}")
         else:
             logger.warning(
-                f"{provider} model: ❌ failed to load — verify UNSLOTH_MODEL_ID and HF_TOKEN"
+                f"{backend} model: ❌ failed to load — verify MODEL_NAME and HF_TOKEN"
             )
 
     # Initialize Weaviate vector store & index
@@ -130,9 +135,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AI Service Orchestrator for Informal Economy",
     description=(
-        "Agentic AI system powered by Gemma (Unsloth, open-source) with "
-        "Hybrid AI Knowledge Engine: Agentic RAG + Reranking + CAG + "
-        "Context Engineering + LoRA Fine-Tuning."
+        "Agentic AI system with a configurable open-source LLM backend "
+        "(transformers / Ollama / Unsloth) and a Hybrid AI Knowledge Engine: "
+        "Agentic RAG + Reranking + CAG + Context Engineering + LoRA Fine-Tuning."
     ),
     version="2.0.0",
     lifespan=lifespan,
@@ -155,7 +160,7 @@ async def root():
     return {
         "service": "AI Service Orchestrator",
         "version": "2.0.0",
-        "stack": "Gemma (Unsloth) + Weaviate + Redis + PostgreSQL",
+        "stack": "LLM (configurable: transformers/Ollama/Unsloth) + Weaviate + Redis + PostgreSQL",
         "knowledge_engine": ["Agentic RAG", "Reranking", "CAG (Rust)", "Context Engineering", "LoRA Fine-Tuning"],
         "docs": "/docs",
         "health": "/api/v1/health",
