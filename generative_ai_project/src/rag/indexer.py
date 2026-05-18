@@ -19,7 +19,7 @@ _EMBEDDINGS_PATH = Path(__file__).parent.parent.parent / "data" / "embeddings" /
 def index_providers(
     csv_path: Optional[str] = None,
     force_rebuild: bool = False,
-    embedding_model: str = "BAAI/bge-large-en-v1.5",
+    embedding_model: str = "BAAI/bge-m3",
     batch_size: int = 128,
     device: str = "cpu",
 ) -> WeaviateVectorStore:

@@ -15,7 +15,7 @@ The implementation is intentionally split into:
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
 | LLM Runtime | Gemma 4 via Unsloth or Ollama | Intent extraction, reasoning, message generation |
-| Embeddings | BAAI/bge-large-en-v1.5 | Semantic query + provider representation |
+| Embeddings | BAAI/bge-m3 | Multilingual semantic query + provider representation (EN / Urdu / Roman Urdu) |
 | Reranking | BAAI/bge-reranker-base | Precision candidate re-ordering after retrieval |
 | Vector Store | Weaviate | Hybrid retrieval over provider metadata + vectors |
 | Session State | Redis with in-memory fallback | Conversation history, ranked options, booking workflow state |

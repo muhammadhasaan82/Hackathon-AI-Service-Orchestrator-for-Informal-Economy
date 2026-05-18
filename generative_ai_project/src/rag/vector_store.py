@@ -2,7 +2,7 @@
 Vector Store — Weaviate integration for semantic + hybrid search.
 
 Uses Weaviate v4 Python client with gRPC. Vectorizer set to 'none'
-since we provide our own BAAI/bge-large-en-v1.5 embeddings.
+since we provide our own BAAI/bge-m3 embeddings (multilingual).
 """
 
 import logging

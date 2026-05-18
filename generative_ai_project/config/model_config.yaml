@@ -52,9 +52,9 @@ providers:
       max_output_tokens: 8192
       num_ctx: 16384
 
-# ── Embedding Configuration (Open-Source) ───────────────────
+# ── Embedding Configuration (Open-Source, Multilingual) ─────
 embedding:
-  model_name: "BAAI/bge-large-en-v1.5"
+  model_name: "BAAI/bge-m3"      # Multilingual: English, Urdu, Roman Urdu
   dimensions: 1024
   batch_size: 128
   normalize: true

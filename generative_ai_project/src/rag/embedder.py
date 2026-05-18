@@ -1,8 +1,9 @@
 """
-Embedder — BAAI/bge-large-en-v1.5 embedding generation.
+Embedder — BAAI/bge-m3 embedding generation.
 
 Creates 1024-dimensional vector representations for provider
-chunks and user queries. Uses sentence-transformers for local inference.
+chunks and user queries. Supports English, Urdu, and Roman Urdu.
+Uses sentence-transformers for local inference.
 """
 
 import logging
@@ -17,7 +18,7 @@ logger = logging.getLogger("rag.embedder")
 _model = None
 
 
-def _get_model(model_name: str = "BAAI/bge-large-en-v1.5", device: str = "cpu"):
+def _get_model(model_name: str = "BAAI/bge-m3", device: str = "cpu"):
     """Lazy-load the embedding model."""
     global _model
     if _model is None:
@@ -30,7 +31,7 @@ def _get_model(model_name: str = "BAAI/bge-large-en-v1.5", device: str = "cpu"):
 
 def embed_texts(
     texts: list[str],
-    model_name: str = "BAAI/bge-large-en-v1.5",
+    model_name: str = "BAAI/bge-m3",
     batch_size: int = 128,
     normalize: bool = True,
     device: str = "cpu",
@@ -58,7 +59,7 @@ def embed_texts(
 
 def embed_query(
     query: str,
-    model_name: str = "BAAI/bge-large-en-v1.5",
+    model_name: str = "BAAI/bge-m3",
     device: str = "cpu",
 ) -> np.ndarray:
     """

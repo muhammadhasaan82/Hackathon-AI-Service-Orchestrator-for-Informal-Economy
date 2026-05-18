@@ -138,7 +138,7 @@ curl -X POST http://localhost:8000/api/v1/chat \
 | Component | Technology |
 |-----------|-----------|
 | LLM | Gemma 4 via Unsloth or Ollama (Apache 2.0) |
-| Embeddings | BAAI/bge-large-en-v1.5 (MIT) |
+| Embeddings | BAAI/bge-m3 — multilingual EN/UR/Roman-UR (MIT) |
 | Reranker | BAAI/bge-reranker-base (MIT) |
 | Vector Store | Weaviate (BSD-3) |
 | Session Cache | Redis (BSD-3) |

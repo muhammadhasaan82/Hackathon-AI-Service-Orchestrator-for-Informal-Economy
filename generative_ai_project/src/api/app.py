@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
             logger.info("Weaviate empty — indexing 50K providers...")
             embedding_cfg = configs["model"].get("embedding", {})
             vector_store = index_providers(
-                embedding_model=embedding_cfg.get("model_name", "BAAI/bge-large-en-v1.5"),
+                embedding_model=embedding_cfg.get("model_name", "BAAI/bge-m3"),
                 batch_size=embedding_cfg.get("batch_size", 128),
                 device=embedding_cfg.get("device", "cpu"),
             )
