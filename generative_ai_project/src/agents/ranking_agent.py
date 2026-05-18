@@ -136,12 +136,28 @@ class RankingAgent:
             meta = provider.get("metadata", provider)
             score = provider.get("score_result", {}).get("composite_score", 0)
             breakdown = provider.get("score_result", {}).get("breakdown", {})
-            strengths = sorted(breakdown.items(), key=lambda item: item[1], reverse=True)[:3] if isinstance(breakdown, dict) else []
-            strengths_text = ", ".join(f"{k}={v:.2f}" for k, v in strengths if isinstance(v, (int, float))) or "balanced score"
+            strengths = sorted(
+                self._numeric_breakdown_items(breakdown),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:3]
+            strengths_text = (
+                ", ".join(f"{key}={value:.2f}" for key, value in strengths)
+                or "rating, availability, response time"
+            )
             lines.append(
                 f"{i}. {meta.get('provider_name', 'Provider')} scored {score:.2f}; strongest signals: {strengths_text}."
             )
         return "\n".join(lines)
+
+    def _numeric_breakdown_items(self, breakdown: dict) -> list[tuple[str, float]]:
+        if not isinstance(breakdown, dict):
+            return []
+        return [
+            (key, float(value))
+            for key, value in breakdown.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        ]
 
     async def _generate_reasoning(self, providers: list[dict], intent: dict) -> str:
         """Use LLM to generate natural language reasoning for the rankings."""

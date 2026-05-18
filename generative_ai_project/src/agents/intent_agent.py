@@ -45,6 +45,12 @@ _TIME_PATTERNS = [
 
 _URGENT_TERMS = ["urgent", "emergency", "foran", "jaldi", "abhi", "immediately", "asap", "leak", "spark", "smoke"]
 _ROMAN_URDU_HINTS = ["mujhe", "chahiye", "karwana", "hai", "kal", "aaj", "abhi", "foran", "jaldi", "mein", "kaam"]
+_AREA_STOP_TERMS = {
+    "today", "aaj", "tomorrow", "kal", "morning", "subah", "afternoon", "dupehar", "dopahar",
+    "evening", "shaam", "night", "raat", "now", "abhi", "urgent", "emergency", "foran",
+    "jaldi", "immediately", "asap", "need", "needs", "needed", "want", "wants", "chahiye",
+    "service", "kaam", "for", "ke", "liye",
+}
 
 
 class IntentAgent:
@@ -222,23 +228,39 @@ class IntentAgent:
     def _extract_area(self, text: str, city: Optional[str]) -> Optional[str]:
         lowered = text.lower()
         patterns = [
+            r"\b(DHA(?:\s+Phase\s+\d+)?|Gulberg|Bahria Town|Johar Town|Clifton|G-13|F-10)\b",
             r"\bin\s+([A-Za-z0-9\-/ ]{2,40})(?:\s+(?:mein|me|today|tomorrow|kal|aaj|urgent|chahiye|for|ke liye)\b|$)",
             r"\bmein\s+([A-Za-z0-9\-/ ]{2,40})(?:\s+(?:chahiye|service|kaam|urgent)\b|$)",
             r"\b([A-Za-z]-?\d{1,2}(?:/\d{1,2})?)\b",
-            r"\b(DHA(?:\s+Phase\s+\d+)?|Gulberg|Bahria Town|Johar Town|Clifton|G-13|F-10)\b",
         ]
         for pattern in patterns:
             match = re.search(pattern, text, flags=re.IGNORECASE)
             if match:
-                area = match.group(1).strip(" ,.-")
-                if city:
-                    area = re.sub(rf"\b{re.escape(city)}\b", "", area, flags=re.IGNORECASE).strip(" ,.-")
+                area = self._clean_area_candidate(match.group(1), city)
                 if not area or (city and area.lower() == city.lower()):
                     continue
                 return area
         if city and city.lower() in lowered:
             return None
         return None
+
+    def _clean_area_candidate(self, candidate: str, city: Optional[str]) -> Optional[str]:
+        area = (candidate or "").strip(" ,.-")
+        if not area:
+            return None
+
+        if city:
+            area = re.sub(rf"\b{re.escape(city)}\b", " ", area, flags=re.IGNORECASE)
+
+        kept_tokens = []
+        for token in re.split(r"\s+", area):
+            cleaned = token.strip(" ,.-").lower()
+            if not cleaned or cleaned in _AREA_STOP_TERMS:
+                break
+            kept_tokens.append(token.strip(" ,.-"))
+
+        area = " ".join(token for token in kept_tokens if token).strip(" ,.-")
+        return area or None
 
     def _extract_time(self, lowered: str) -> Optional[str]:
         values = []
