@@ -1,17 +1,17 @@
 # ═══════════════════════════════════════════════════════════════
 # Model Configuration — Fully Open-Source / Self-Hosted
-# Default backend is CPU-safe (transformers). Switch via MODEL_BACKEND
-# env var to "ollama" (recommended on CPU-only VMs) or "unsloth" (GPU).
+# Default backend is Ollama for CPU-only VMs. Switch via MODEL_BACKEND
+# or MODEL_PROVIDER env var to "transformers" or "unsloth" when needed.
 # ═══════════════════════════════════════════════════════════════
 
 # ── Active Provider ─────────────────────────────────────────
-# Overridden by MODEL_BACKEND env var at runtime.
-active_provider: "transformers"
+# Overridden by MODEL_BACKEND or MODEL_PROVIDER env vars at runtime.
+active_provider: "ollama"
 
 # ── Provider Configurations ─────────────────────────────────
 providers:
-  # CPU-safe default. Uses HuggingFace transformers directly so the API
-  # can start on plain CPU-only VMs without CUDA / Unsloth.
+  # Optional HuggingFace Transformers fallback. Not the VM default because
+  # CPU-only FP32 loading is heavy; keep available for compatible hosts.
   transformers:
     model_id: "google/gemma-3-4b-it"
     device: null                    # null = auto (cuda if available, else cpu)
@@ -47,14 +47,15 @@ providers:
 
   ollama:
     base_url_env: "OLLAMA_BASE_URL"
-    base_url_default: "http://localhost:11434"
-    model_id: "gemma4:31b"
+    base_url_default: "http://127.0.0.1:11434"
+    model_id_env: "OLLAMA_MODEL"
+    model_id: "gemma3:1b"
     generation_config:
       temperature: 0.10          # Very low for deterministic reasoning
       top_p: 0.80
       top_k: 30
-      max_output_tokens: 4096
-      num_ctx: 8192              # Context window size
+      max_output_tokens: 2048
+      num_ctx: 4096              # CPU-friendly context window for gemma3:1b
       repeat_penalty: 1.1
     # Ollama-native tool/function calling
     supports_tools: true
@@ -62,8 +63,9 @@ providers:
 
   ollama_large:
     base_url_env: "OLLAMA_BASE_URL"
-    base_url_default: "http://localhost:11434"
-    model_id: "gemma4:31b"
+    base_url_default: "http://127.0.0.1:11434"
+    model_id_env: "OLLAMA_MODEL"
+    model_id: "gemma3:1b"
     generation_config:
       temperature: 0.10
       top_p: 0.80

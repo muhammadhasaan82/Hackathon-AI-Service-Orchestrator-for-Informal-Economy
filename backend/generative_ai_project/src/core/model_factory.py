@@ -4,10 +4,10 @@ Model Factory — Creates LLM instances from YAML configuration.
 Reads model_config.yaml and instantiates the configured local LLM client.
 
 Backend selection (priority order):
-    1. MODEL_BACKEND env var          (preferred — new style)
-    2. MODEL_PROVIDER env var         (legacy — kept for back-compat)
+    1. MODEL_PROVIDER env var         (VM/deployment friendly)
+    2. MODEL_BACKEND env var          (kept for back-compat)
     3. active_provider in YAML        (config-level default)
-    4. Hard-coded fallback            ("transformers" — CPU-safe)
+    4. Hard-coded fallback            ("ollama" — CPU VM default)
 
 Heavy backend modules (unsloth, transformers, ollama_client) are
 imported lazily so the API can start on CPU-only machines without
@@ -42,10 +42,10 @@ def _load_yaml(filename: str) -> dict:
 def _resolve_backend(config: dict) -> str:
     """Resolve which backend to use based on env vars and YAML."""
     raw = (
-        os.getenv("MODEL_BACKEND")
-        or os.getenv("MODEL_PROVIDER")
+        os.getenv("MODEL_PROVIDER")
+        or os.getenv("MODEL_BACKEND")
         or config.get("active_provider")
-        or "transformers"
+        or "ollama"
     )
     backend = raw.strip().lower()
 
@@ -58,13 +58,8 @@ def _resolve_backend(config: dict) -> str:
 
 
 def _resolve_model_id(provider_config: dict, backend: str) -> str:
-    """Resolve the model id, respecting MODEL_NAME, backend-specific env, then YAML."""
-    # MODEL_NAME is the unified, backend-agnostic env var
-    unified = os.getenv("MODEL_NAME")
-    if unified:
-        return unified.strip()
-
-    # Fall back to backend-specific env vars for compatibility
+    """Resolve the model id, respecting backend env, MODEL_NAME/MODEL_ID, then YAML."""
+    # Prefer backend-specific env vars so OLLAMA_MODEL can override stale MODEL_NAME values.
     model_id_env = provider_config.get("model_id_env")
     if model_id_env:
         env_value = os.getenv(model_id_env, "").strip()
@@ -75,6 +70,11 @@ def _resolve_model_id(provider_config: dict, backend: str) -> str:
         env_value = os.getenv("OLLAMA_MODEL", "").strip()
         if env_value:
             return env_value
+
+    # MODEL_NAME is the unified env var; MODEL_ID is accepted for VM compatibility.
+    unified = os.getenv("MODEL_NAME") or os.getenv("MODEL_ID")
+    if unified:
+        return unified.strip()
 
     # Fall back to YAML default
     return str(provider_config.get("model_id", "")).strip()
@@ -103,8 +103,8 @@ def get_model(purpose: str = "default", config_override: Optional[dict] = None) 
     """
     Factory method to create an LLM instance.
 
-    Returns the configured local LLM client. Defaults to the CPU-safe
-    ``transformers`` backend so the API can start on CPU-only VMs.
+    Returns the configured local LLM client. Defaults to the Ollama backend
+    so CPU-only VMs avoid loading HuggingFace Transformers in-process.
     """
     config = _load_yaml("model_config.yaml")
     backend = _resolve_backend(config)

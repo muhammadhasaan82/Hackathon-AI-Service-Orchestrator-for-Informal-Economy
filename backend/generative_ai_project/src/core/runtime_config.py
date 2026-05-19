@@ -45,8 +45,8 @@ def env_str(name: str, default: Optional[str] = None) -> Optional[str]:
     return value if value else default
 
 
-def active_model_backend(default: str = "transformers") -> str:
-    return (os.getenv("MODEL_BACKEND") or os.getenv("MODEL_PROVIDER") or default).strip().lower()
+def active_model_backend(default: str = "ollama") -> str:
+    return (os.getenv("MODEL_PROVIDER") or os.getenv("MODEL_BACKEND") or default).strip().lower()
 
 
 def reset_llm_call_budget() -> None:

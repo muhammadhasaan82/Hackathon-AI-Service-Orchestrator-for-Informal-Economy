@@ -81,13 +81,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Reranker preload skipped because RERANK_RESULTS=false")
 
-    # Initialize LLM. Backend selected by MODEL_BACKEND env var:
-    #   transformers (default, CPU-safe) | ollama (recommended on CPU VMs) | unsloth (GPU)
+    # Initialize LLM. Backend selected by MODEL_PROVIDER / MODEL_BACKEND env var:
+    #   ollama (default for CPU VMs) | transformers | unsloth (GPU)
     llm = get_model()
     backend = (
-        os.getenv("MODEL_BACKEND")
-        or os.getenv("MODEL_PROVIDER")
-        or configs["model"].get("active_provider", "transformers")
+        os.getenv("MODEL_PROVIDER")
+        or os.getenv("MODEL_BACKEND")
+        or configs["model"].get("active_provider", "ollama")
     )
     logger.info(f"LLM: {llm.model_id} via {backend}")
 
@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
                 logger.info(f"Available models: {llm.list_models()}")
         else:
             logger.warning(
-                f"{backend} model: ❌ failed to load — verify MODEL_NAME and HF_TOKEN"
+                f"{backend} model: ❌ failed to load — verify MODEL_PROVIDER/MODEL_NAME/OLLAMA_MODEL and backend health"
             )
 
     # Initialize Weaviate vector store & index
