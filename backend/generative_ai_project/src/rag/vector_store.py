@@ -107,6 +107,16 @@ class WeaviateVectorStore:
 
         logger.info(f"Weaviate now contains {self.count} documents")
 
+    def _object_to_document(self, obj) -> dict:
+        """Convert a Weaviate object into the app's document shape."""
+        props = {k: v for k, v in obj.properties.items()}
+        return {
+            "id": str(props.get("provider_id", "")),
+            "text": props.pop("chunk_text", ""),
+            "metadata": props,
+            "distance": obj.metadata.distance if obj.metadata else 0.0,
+        }
+
     def search(
         self,
         query_embedding: list[float],
@@ -136,18 +146,25 @@ class WeaviateVectorStore:
                 return_metadata=wq.MetadataQuery(distance=True),
             )
 
-        documents = []
-        for obj in results.objects:
-            props = {k: v for k, v in obj.properties.items()}
-            documents.append({
-                "id": str(props.get("provider_id", "")),
-                "text": props.pop("chunk_text", ""),
-                "metadata": props,
-                "distance": obj.metadata.distance if obj.metadata else 0.0,
-            })
+        documents = [self._object_to_document(obj) for obj in results.objects]
 
         logger.info(f"Weaviate search returned {len(documents)} results")
         return documents
+
+    def get_provider_by_id(self, provider_id: int) -> Optional[dict]:
+        """Fetch a single provider by its stored provider_id."""
+        import weaviate.classes.query as wq
+
+        collection = self.client.collections.get(self.collection_name)
+        results = collection.query.fetch_objects(
+            filters=wq.Filter.by_property("provider_id").equal(provider_id),
+            limit=1,
+        )
+
+        if not results.objects:
+            return None
+
+        return self._object_to_document(results.objects[0])
 
     def hybrid_search(
         self,

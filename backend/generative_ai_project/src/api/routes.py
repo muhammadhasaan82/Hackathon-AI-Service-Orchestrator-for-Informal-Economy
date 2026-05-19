@@ -318,36 +318,30 @@ async def get_provider_detail(provider_id: int):
     Mobile app uses this for the "Provider Detail" screen.
     """
     _check_init()
-    from ..rag.embedder import embed_query
 
-    results = _vector_store.search(
-        query_embedding=embed_query(f"provider {provider_id}").tolist(),
-        n_results=100,
-    )
-
-    for r in results:
-        meta = r.get("metadata", {})
-        if meta.get("provider_id") == provider_id:
-            return {
-                "provider_id": meta.get("provider_id"),
-                "provider_name": meta.get("provider_name"),
-                "category": meta.get("category"),
-                "city": meta.get("city"),
-                "area": meta.get("area"),
-                "full_location": meta.get("full_location", ""),
-                "latitude": meta.get("latitude"),
-                "longitude": meta.get("longitude"),
-                "rating": meta.get("rating"),
-                "availability": meta.get("availability"),
-                "experience_years": meta.get("experience_years"),
-                "completed_jobs": meta.get("completed_jobs"),
-                "response_time_minutes": meta.get("response_time_minutes"),
-                "price_range": meta.get("price_range"),
-                "verified_provider": meta.get("verified_provider"),
-                "languages_supported": meta.get("languages_supported", ""),
-                "phone_number": meta.get("phone_number"),
-                "email": meta.get("email"),
-            }
+    provider = _vector_store.get_provider_by_id(provider_id)
+    if provider:
+        meta = provider.get("metadata", {})
+        return {
+            "provider_id": meta.get("provider_id"),
+            "provider_name": meta.get("provider_name"),
+            "category": meta.get("category"),
+            "city": meta.get("city"),
+            "area": meta.get("area"),
+            "full_location": meta.get("full_location", ""),
+            "latitude": meta.get("latitude"),
+            "longitude": meta.get("longitude"),
+            "rating": meta.get("rating"),
+            "availability": meta.get("availability"),
+            "experience_years": meta.get("experience_years"),
+            "completed_jobs": meta.get("completed_jobs"),
+            "response_time_minutes": meta.get("response_time_minutes"),
+            "price_range": meta.get("price_range"),
+            "verified_provider": meta.get("verified_provider"),
+            "languages_supported": meta.get("languages_supported", ""),
+            "phone_number": meta.get("phone_number"),
+            "email": meta.get("email"),
+        }
 
     raise HTTPException(404, detail=f"Provider {provider_id} not found")
 
