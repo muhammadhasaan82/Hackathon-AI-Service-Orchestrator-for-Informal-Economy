@@ -1,6 +1,29 @@
-# Ignore PDF documents and pdf_pages directory at the root
-pdf_pages/
-*.pdf
-"Backend Architecture Proposal_ Agentic AI Service Orchestrator.pdf"
-"Google Antigravity Hackathon - Challenge.pdf"
-service_providers_50000.csv
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.env
+!.env.example
+
+# Flutter/Dart
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
+# Android/iOS build artifacts
+.gradle/
+android/.gradle/
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
