@@ -66,6 +66,7 @@ Setup commands are documented as placeholders only:
 - Backend: `docs/setup/BACKEND_SETUP.md`
 - Mobile: `docs/setup/MOBILE_SETUP.md`
 - Structure: `docs/setup/PROJECT_STRUCTURE.md`
+- Smoke tests: `docs/setup/SMOKE_TESTS.md`
 
 Do not commit local virtual environments, dependency folders, build outputs, cache folders, or secrets.
 
