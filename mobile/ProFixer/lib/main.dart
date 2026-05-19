@@ -505,6 +505,11 @@ class ChatResult {
     required this.booking,
   });
 
+  /// Whether the backend is asking the user to confirm a booking.
+  bool get isAwaitingBookingConfirmation => status == 'awaiting_booking_confirmation';
+  bool get isBookingConfirmed => status == 'booking_confirmed';
+  bool get isBookingCancelled => status == 'booking_cancelled';
+
   factory ChatResult.fromJson(Map<String, dynamic> json) {
     return ChatResult(
       response: '${json['response'] ?? ''}',
@@ -516,16 +521,66 @@ class ChatResult {
   }
 }
 
+class BookingModel {
+  final String bookingId;
+  final String sessionId;
+  final int providerId;
+  final String serviceType;
+  final String location;
+  final String status;
+  final String? scheduledTime;
+  final String? userNotes;
+  final String createdAt;
+
+  BookingModel({
+    required this.bookingId,
+    required this.sessionId,
+    required this.providerId,
+    required this.serviceType,
+    required this.location,
+    required this.status,
+    this.scheduledTime,
+    this.userNotes,
+    required this.createdAt,
+  });
+
+  factory BookingModel.fromJson(Map<String, dynamic> json) {
+    return BookingModel(
+      bookingId: '${json['booking_id'] ?? json['id'] ?? ''}',
+      sessionId: '${json['session_id'] ?? ''}',
+      providerId: _asInt(json['provider_id']),
+      serviceType: '${json['service_type'] ?? ''}',
+      location: '${json['location'] ?? ''}',
+      status: '${json['status'] ?? 'PENDING'}',
+      scheduledTime: json['scheduled_time']?.toString(),
+      userNotes: json['user_notes']?.toString(),
+      createdAt: '${json['created_at'] ?? ''}',
+    );
+  }
+}
+
+// ── Production API Configuration ───────────────────────────
+class ApiConfig {
+  static const Duration connectionTimeout = Duration(seconds: 20);
+  static const Duration readTimeout = Duration(seconds: 45);
+  static const Duration chatTimeout = Duration(seconds: 90);
+  static const Duration wsConnectTimeout = Duration(seconds: 8);
+  static const Duration wsResponseTimeout = Duration(seconds: 90);
+  static const int maxWsRetries = 2;
+  static const Duration wsRetryDelay = Duration(seconds: 1);
+}
+
 class BackendClient {
   BackendClient._() {
-    _http.connectionTimeout = const Duration(seconds: 20);
+    _http.connectionTimeout = ApiConfig.connectionTimeout;
   }
 
   static final BackendClient instance = BackendClient._();
 
+  // Production URL: override at build time with --dart-define=PROFIXER_API_BASE_URL=...
   static const String apiBaseUrl = String.fromEnvironment(
     'PROFIXER_API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:8000',
+    defaultValue: 'http://20.17.177.214:8000',
   );
   static const String configuredWsBaseUrl = String.fromEnvironment(
     'PROFIXER_WS_BASE_URL',
@@ -534,6 +589,14 @@ class BackendClient {
 
   final HttpClient _http = HttpClient();
   String? _sessionId;
+
+  /// Returns current session ID, creating one from backend if needed.
+  Future<String> ensureSession() async {
+    if (_sessionId != null && _sessionId!.isNotEmpty) return _sessionId!;
+    final payload = await _postJson('/api/v1/sessions', {});
+    _sessionId = '${payload['session_id'] ?? ''}';
+    return _sessionId!;
+  }
 
   Future<List<ProviderModel>> fetchProviders({
     required String query,
@@ -555,12 +618,59 @@ class BackendClient {
         .toList();
   }
 
+  /// Check backend health.
+  Future<Map<String, dynamic>> checkHealth() async {
+    return _getJson('/api/v1/health', {});
+  }
+
+  /// Create a new session explicitly.
+  Future<String> createSession() async {
+    final payload = await _postJson('/api/v1/sessions', {});
+    _sessionId = '${payload['session_id'] ?? ''}';
+    return _sessionId!;
+  }
+
+  /// Fetch full provider detail by ID.
+  Future<Map<String, dynamic>> fetchProviderDetail(int providerId) async {
+    return _getJson('/api/v1/providers/$providerId', {});
+  }
+
+  /// Create a booking via the backend.
+  Future<BookingModel> createBooking({
+    required String sessionId,
+    required int providerId,
+    required String serviceType,
+    required String location,
+    String? scheduledTime,
+    String? userNotes,
+  }) async {
+    final body = <String, dynamic>{
+      'session_id': sessionId,
+      'provider_id': providerId,
+      'service_type': serviceType,
+      'location': location,
+    };
+    if (scheduledTime != null) body['scheduled_time'] = scheduledTime;
+    if (userNotes != null) body['user_notes'] = userNotes;
+    final payload = await _postJson('/api/v1/bookings', body);
+    return BookingModel.fromJson(payload);
+  }
+
+  /// Send chat message — tries WebSocket with retry, then REST fallback.
   Future<ChatResult> sendChat(String message) async {
-    try {
-      return await _sendChatOverWebSocket(message);
-    } catch (_) {
-      return _sendChatOverRest(message);
+    // Ensure we have a session before chatting.
+    await ensureSession();
+    for (int attempt = 0; attempt <= ApiConfig.maxWsRetries; attempt++) {
+      try {
+        return await _sendChatOverWebSocket(message);
+      } catch (_) {
+        if (attempt < ApiConfig.maxWsRetries) {
+          await Future.delayed(ApiConfig.wsRetryDelay);
+        }
+      }
     }
+    // All WS attempts failed — fall back to REST.
+    return _sendChatOverRest(message);
   }
 
   Future<ChatResult> _sendChatOverRest(String message) async {
@@ -578,14 +688,14 @@ class BackendClient {
     try {
       socket = await WebSocket.connect(_wsUri('/api/v1/ws/chat', {
         'session_id': _sessionId,
-      }).toString()).timeout(const Duration(seconds: 8));
+      }).toString()).timeout(ApiConfig.wsConnectTimeout);
 
       socket.add(jsonEncode({
         'session_id': _sessionId,
         'message': message,
       }));
 
-      await for (final raw in socket.timeout(const Duration(seconds: 90))) {
+      await for (final raw in socket.timeout(ApiConfig.wsResponseTimeout)) {
         final payload = jsonDecode('$raw');
         if (payload is! Map) continue;
         final data = Map<String, dynamic>.from(payload);
@@ -612,7 +722,7 @@ class BackendClient {
   Future<Map<String, dynamic>> _getJson(String path, Map<String, String?> query) async {
     final request = await _http.getUrl(_apiUri(path, query));
     request.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
-    return _readJsonResponse(await request.close().timeout(const Duration(seconds: 45)));
+    return _readJsonResponse(await request.close().timeout(ApiConfig.readTimeout));
   }
 
   Future<Map<String, dynamic>> _postJson(String path, Map<String, dynamic> body) async {
@@ -620,13 +730,25 @@ class BackendClient {
     request.headers.contentType = ContentType.json;
     request.headers.set(HttpHeaders.acceptHeader, ContentType.json.mimeType);
     request.write(jsonEncode(body));
-    return _readJsonResponse(await request.close().timeout(const Duration(seconds: 90)));
+    return _readJsonResponse(await request.close().timeout(ApiConfig.chatTimeout));
   }
 
   Future<Map<String, dynamic>> _readJsonResponse(HttpClientResponse response) async {
     final text = await utf8.decoder.bind(response).join();
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError('Backend returned ${response.statusCode}: $text');
+      // Parse FastAPI error detail if available.
+      String errorMsg = 'Server error (${response.statusCode})';
+      try {
+        final errBody = jsonDecode(text);
+        if (errBody is Map && errBody['detail'] != null) {
+          errorMsg = '${errBody['detail']}';
+        }
+      } catch (_) {
+        // Use generic message.
+      }
+      if (response.statusCode == 408) errorMsg = 'Request timed out. Please try again.';
+      if (response.statusCode == 503) errorMsg = 'Service temporarily unavailable. Please wait.';
+      throw StateError(errorMsg);
     }
     final decoded = jsonDecode(text);
     if (decoded is Map) {
@@ -1261,7 +1383,7 @@ class _ServicesAndDetailsPageState extends State<ServicesAndDetailsPage> {
   }
 
   Widget _availableCard(ProviderModel p) {
-    final actionLabel = p.phone.isEmpty ? 'Provider phone pending' : 'Call ${p.phone}';
+    final actionLabel = p.phone.isEmpty ? 'View Details' : 'Call ${p.phone}';
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface, borderRadius: BorderRadius.circular(20),
@@ -1324,9 +1446,10 @@ class _ServicesAndDetailsPageState extends State<ServicesAndDetailsPage> {
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(12), onTap: () {},
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => _showProviderDetailDialog(p),
                 child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  const Icon(Icons.phone_rounded, color: Colors.white, size: 18),
+                  Icon(p.phone.isEmpty ? Icons.info_rounded : Icons.phone_rounded, color: Colors.white, size: 18),
                   const SizedBox(width: 8),
                   Text(actionLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
                 ]),
@@ -1334,6 +1457,104 @@ class _ServicesAndDetailsPageState extends State<ServicesAndDetailsPage> {
             ),
           ),
         ),
+      ]),
+    );
+  }
+
+  void _showProviderDetailDialog(ProviderModel p) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            // Avatar
+            Container(
+              width: 64, height: 64,
+              decoration: BoxDecoration(gradient: AppGradients.primary, shape: BoxShape.circle),
+              child: Center(child: Text(p.name[0], style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900))),
+            ),
+            const SizedBox(height: 14),
+            Text(p.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.textDark), textAlign: TextAlign.center),
+            const SizedBox(height: 4),
+            Text(p.specialty, style: const TextStyle(fontSize: 13, color: AppColors.textMid)),
+            const SizedBox(height: 16),
+            // Info grid
+            _detailRow(Icons.star_rounded, 'Rating', '${p.rating} ⭐'),
+            _detailRow(Icons.work_rounded, 'Jobs Done', '${p.reviews}'),
+            _detailRow(Icons.access_time_rounded, 'Response', '${p.eta} min'),
+            _detailRow(Icons.location_city_rounded, 'Location', '${p.area}, ${p.city}'),
+            _detailRow(Icons.attach_money_rounded, 'Price Range', p.priceRange.isEmpty ? 'N/A' : p.priceRange),
+            _detailRow(Icons.circle, 'Availability', p.availability.isEmpty ? 'N/A' : p.availability),
+            if (p.phone.isNotEmpty) _detailRow(Icons.phone_rounded, 'Phone', p.phone),
+            const SizedBox(height: 20),
+            // Action buttons
+            Row(children: [
+              Expanded(
+                child: Container(
+                  height: 44,
+                  decoration: BoxDecoration(
+                    gradient: AppGradients.primary,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        // Open chatbot to initiate booking via conversation
+                        showModalBottomSheet(
+                          context: context, isScrollControlled: true, backgroundColor: Colors.transparent,
+                          builder: (_) => const ChatBotWidget(),
+                        );
+                      },
+                      child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Icon(Icons.chat_rounded, color: Colors.white, size: 16),
+                        SizedBox(width: 6),
+                        Text('Book via Chat', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
+                      ]),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                height: 44, width: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.bg,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => Navigator.pop(ctx),
+                    child: const Icon(Icons.close_rounded, color: AppColors.textMid, size: 20),
+                  ),
+                ),
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(children: [
+        Icon(icon, size: 16, color: AppColors.primary),
+        const SizedBox(width: 10),
+        SizedBox(
+          width: 80,
+          child: Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textLight, fontWeight: FontWeight.w600)),
+        ),
+        Expanded(child: Text(value, style: const TextStyle(fontSize: 12, color: AppColors.textDark, fontWeight: FontWeight.w700))),
       ]),
     );
   }
@@ -1442,13 +1663,30 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
     try {
       final result = await BackendClient.instance.sendChat(txt);
       if (!mounted) return;
-      setState(() => _messages.add({"sender": "bot", "text": result.response}));
+      setState(() {
+        // Add AI response text
+        _messages.add({"sender": "bot", "text": result.response});
+
+        // If booking info is present, render a styled booking card
+        if (result.booking != null) {
+          final b = result.booking!;
+          final statusEmoji = result.isBookingConfirmed ? '✅' : (result.isBookingCancelled ? '❌' : '📋');
+          final bookingInfo = StringBuffer();
+          bookingInfo.writeln('$statusEmoji Booking ${result.status.replaceAll("_", " ").toUpperCase()}');
+          bookingInfo.writeln('───────────────');
+          if (b['service_type'] != null) bookingInfo.writeln('🛠️ Service: ${b['service_type']}');
+          if (b['provider_name'] != null) bookingInfo.writeln('👤 Provider: ${b['provider_name']}');
+          if (b['location'] != null) bookingInfo.writeln('📍 Location: ${b['location']}');
+          if (b['scheduled_time'] != null) bookingInfo.writeln('🕒 Time: ${b['scheduled_time']}');
+          if (b['status'] != null) bookingInfo.writeln('📊 Status: ${b['status']}');
+          if (b['booking_id'] != null) bookingInfo.writeln('🆔 ID: ${b['booking_id']}');
+          _messages.add({"sender": "booking", "text": bookingInfo.toString().trimRight()});
+        }
+      });
     } catch (error) {
       if (!mounted) return;
-      setState(() => _messages.add({
-        "sender": "bot",
-        "text": "Backend unavailable. Please check the API URL and try again.",
-      }));
+      final errMsg = error is StateError ? error.message : 'Connection failed. Please try again.';
+      setState(() => _messages.add({"sender": "bot", "text": errMsg}));
     } finally {
       if (mounted) setState(() => _isSending = false);
     }
@@ -1488,7 +1726,32 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
               padding: const EdgeInsets.all(16),
               itemCount: _messages.length,
               itemBuilder: (context, i) {
-                final isUser = _messages[i]["sender"] == "user";
+                final msg = _messages[i];
+                final isUser = msg["sender"] == "user";
+                final isBooking = msg["sender"] == "booking";
+
+                if (isBooking) {
+                  // Styled booking info card
+                  return Align(
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(14),
+                      constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.80),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFFF0FDF4), Color(0xFFECFDF5)],
+                          begin: Alignment.topLeft, end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFF22C55E).withOpacity(0.3)),
+                        boxShadow: [BoxShadow(color: AppColors.cardShadow, blurRadius: 8, offset: const Offset(0, 2))],
+                      ),
+                      child: Text(msg["text"]!, style: const TextStyle(color: AppColors.textDark, fontSize: 12, height: 1.5, fontWeight: FontWeight.w600)),
+                    ),
+                  );
+                }
+
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
@@ -1505,7 +1768,7 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
                       ),
                       boxShadow: [BoxShadow(color: AppColors.cardShadow, blurRadius: 6, offset: const Offset(0, 2))],
                     ),
-                    child: Text(_messages[i]["text"]!, style: TextStyle(color: isUser ? Colors.white : AppColors.textDark, fontSize: 13, height: 1.4)),
+                    child: Text(msg["text"]!, style: TextStyle(color: isUser ? Colors.white : AppColors.textDark, fontSize: 13, height: 1.4)),
                   ),
                 );
               },
