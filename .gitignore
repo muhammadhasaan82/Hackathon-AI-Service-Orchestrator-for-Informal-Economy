@@ -6,6 +6,8 @@ __pycache__/
 venv/
 .env
 !.env.example
+.python-version
+
 
 # Flutter/Dart
 .dart_tool/
@@ -27,3 +29,18 @@ ios/Flutter/Flutter.podspec
 Thumbs.db
 .vscode/
 .idea/
+
+# Local runtime
+uv.lock
+
+# CUDA installers
+*.deb
+
+# Generated datasets
+service_providers_50000.csv
+
+# Logs
+logs/
+*.log
+# PM2
+.pm2/

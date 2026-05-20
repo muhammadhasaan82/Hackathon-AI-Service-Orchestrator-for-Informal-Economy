@@ -1,0 +1,13 @@
+[project]
+name = "hackathon-ai-service-orchestrator-for-informal-economy"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+    "generative_ai_project",
+    "backend/generative_ai_project",
+]
