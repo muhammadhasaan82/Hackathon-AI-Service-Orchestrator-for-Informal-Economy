@@ -72,6 +72,47 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/chat \
   -d '{"session_id":"smoke-vm","message":"I need a plumber in Karachi today"}'
 ```
 
+Hybrid FAQ plus booking route:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"smoke-hybrid","message":"I need plumber in Karachi. What are charges?"}'
+```
+
+Expected signals in the JSON response:
+
+- `status` is usually `awaiting_booking_confirmation`, `needs_clarification`, or another booking status, not a dead-end FAQ-only route.
+- `routing.primary_intent` is `booking`.
+- `routing.secondary_intents` includes `faq_pricing`.
+- `routing.should_continue_booking` is `true`.
+
+Conversation memory continuation:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"smoke-memory","message":"Need plumber in Karachi"}'
+
+curl -s -X POST http://127.0.0.1:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"smoke-memory","message":"Available in DHA?"}'
+```
+
+The second response should reuse the previous `service_type` and `city`
+when the session store is working.
+
+Ambiguity handling:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"smoke-ambiguity","message":"lumber"}'
+```
+
+Expected signal: `status` is `ambiguity_detected`, and the response asks
+the user to choose between valid dataset categories.
+
 Provider list:
 
 ```bash

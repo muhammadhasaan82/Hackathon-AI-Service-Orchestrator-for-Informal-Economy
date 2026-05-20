@@ -22,6 +22,7 @@ _AGENT_SECTIONS = {
     "booking": ["service_policies", "pricing_heuristics", "escalation_rules", "emergency_handling"],
     "followup": ["service_policies", "emergency_handling", "escalation_rules", "language_conventions"],
     "orchestrator": ["service_policies", "city_mappings", "emergency_handling", "provider_ranking_rules", "safety_guardrails"],
+    "faq": ["faq_policies", "service_policies", "pricing_heuristics", "language_conventions"],
 }
 
 
@@ -36,6 +37,7 @@ class CAGManager:
     def __init__(self, golden_knowledge_path: Optional[str] = None):
         self._cache = self._init_cache()
         self._entry_sections: dict[str, str] = {}
+        self._raw_data: dict = {}
         self._load_golden_knowledge(golden_knowledge_path)
 
     def _init_cache(self):
@@ -64,21 +66,22 @@ class CAGManager:
 
         if not data:
             return
+        self._raw_data = data
 
         entries = []
         for section, content in data.items():
             if isinstance(content, dict):
                 for key, value in content.items():
                     cache_key = f"{section}.{key}"
-                    entries.append((cache_key, str(value)))
+                    entries.append((cache_key, self._serialize_cache_value(value)))
                     self._entry_sections[cache_key] = section
             elif isinstance(content, list):
                 for i, item in enumerate(content):
                     cache_key = f"{section}[{i}]"
-                    entries.append((cache_key, str(item)))
+                    entries.append((cache_key, self._serialize_cache_value(item)))
                     self._entry_sections[cache_key] = section
             else:
-                entries.append((section, str(content)))
+                entries.append((section, self._serialize_cache_value(content)))
                 self._entry_sections[section] = section
 
         if hasattr(self._cache, "batch_set"):
@@ -89,6 +92,12 @@ class CAGManager:
             count = len(entries)
 
         logger.info(f"CAG: Loaded {count} golden knowledge entries")
+
+    def _serialize_cache_value(self, value) -> str:
+        """Serialize YAML values for Rust/Python KV caches without losing structure."""
+        if isinstance(value, (dict, list)):
+            return yaml.safe_dump(value, allow_unicode=True, sort_keys=False).strip()
+        return str(value)
 
     def get_context(
         self,
@@ -175,6 +184,61 @@ class CAGManager:
     def get(self, key: str) -> Optional[str]:
         """Get a single cache entry."""
         return self._cache.get(key)
+
+    def get_faq_policy(self, policy_key: str) -> Optional[str]:
+        """Retrieve a specific FAQ policy entry by key (e.g. 'pricing_policy')."""
+        structured = self.get_structured_faq_policy(policy_key)
+        if structured.get("found") and isinstance(structured.get("policy"), dict):
+            policy = structured["policy"]
+            return (
+                policy.get("short_answer")
+                or policy.get("detailed_answer")
+                or self._cache.get(f"faq_policies.{policy_key}")
+            )
+        return self._cache.get(f"faq_policies.{policy_key}")
+
+    def get_structured_faq_policy(self, policy_key: str) -> dict:
+        """Retrieve structured FAQ policy metadata for orchestration."""
+        policy = (
+            self._raw_data
+            .get("faq_policies", {})
+            .get(policy_key)
+            if isinstance(self._raw_data.get("faq_policies"), dict)
+            else None
+        )
+        if isinstance(policy, dict):
+            return {
+                "policy_key": policy_key,
+                "policy": policy,
+                "source": "cag",
+                "structured": True,
+                "found": True,
+            }
+
+        legacy = self._cache.get(f"faq_policies.{policy_key}")
+        if legacy:
+            return {
+                "policy_key": policy_key,
+                "policy": {
+                    "short_answer": legacy,
+                    "detailed_answer": legacy,
+                    "escalation_required": False,
+                    "dynamic_fields": [],
+                    "related_topics": [],
+                    "followup_prompts": [],
+                    "safe_constraints": [],
+                },
+                "source": "cag",
+                "structured": False,
+                "found": True,
+            }
+        return {
+            "policy_key": policy_key,
+            "policy": None,
+            "source": "cag",
+            "structured": False,
+            "found": False,
+        }
 
     @property
     def size(self) -> int:

@@ -72,6 +72,7 @@ def _chat_response_dict(result: dict, session_id: str) -> dict:
         "followup": result.get("followup"),
         "providers": result.get("providers"),
         "intent": result.get("intent"),
+        "routing": result.get("routing"),
         "latency_ms": result.get("latency_ms"),
     }
 

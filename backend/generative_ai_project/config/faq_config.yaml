@@ -1,0 +1,323 @@
+# ═══════════════════════════════════════════════════════════════
+# FAQ Configuration — Pattern-Based Query Classification
+#
+# All patterns are regex fragments (case-insensitive).
+# The FAQ agent compiles these at startup and tests each
+# incoming message.  NO business facts live here — only
+# structural classification rules.
+# ═══════════════════════════════════════════════════════════════
+
+faq_patterns:
+  # ── Dataset coverage questions ─────────────────────────────
+  dataset_available_cities:
+    patterns:
+      - "which cit"
+      - "what cit"
+      - "kon.*si.*cit"
+      - "kis.*city"
+      - "kahan.*available"
+      - "where.*available"
+      - "available.*cit"
+      - "city.*available"
+      - "in which.*cit"
+      - "cities.*available"
+      - "location.*available"
+      - "kahan.*kaam"
+      - "which.*location"
+    response_template: "cities_list"
+    source: "dataset"
+
+  dataset_available_services:
+    patterns:
+      - "what service"
+      - "which service"
+      - "kon.*si.*service"
+      - "kya.*provide"
+      - "kya.*service"
+      - "categories"
+      - "service.*offer"
+      - "service.*available"
+      - "type.*service"
+      - "kaun.*kaam"
+      - "what.*do you.*do"
+      - "kya kya"
+      - "services list"
+    response_template: "categories_list"
+    source: "dataset"
+
+  dataset_city_areas:
+    patterns:
+      - "areas? in"
+      - "areas? of"
+      - "which area"
+      - "kahan kahan"
+      - "area.*available"
+      - "sectors? in"
+      - "mohall"
+    response_template: "city_areas"
+    source: "dataset"
+
+  dataset_service_coverage:
+    patterns:
+      - "do you (have|provide|offer)"
+      - "available in"
+      - "provide.*in"
+      - "milta.*hai"
+      - "milte.*hain"
+      - "is.*available"
+      - "kya.*mil"
+    response_template: "service_coverage_check"
+    source: "dataset"
+
+  dataset_provider_count:
+    patterns:
+      - "how many"
+      - "kitne"
+      - "total.*provider"
+      - "provider.*count"
+      - "number.*provider"
+      - "count.*provider"
+    response_template: "provider_count"
+    source: "dataset"
+
+  # ── Policy / FAQ questions ─────────────────────────────────
+  faq_pricing:
+    patterns:
+      - "charges?"
+      - "fees?"
+      - "price"
+      - "cost"
+      - "\\brate\\b"
+      - "kitna"
+      - "kitne.*paise"
+      - "kya.*rate"
+      - "kharcha"
+    response_template: "pricing_policy"
+    source: "cag"
+    cag_key: "pricing_policy"
+
+  faq_extra_charges:
+    patterns:
+      - "extra.*charge"
+      - "hidden.*charge"
+      - "additional.*fee"
+      - "alag.*se"
+      - "parts.*charge"
+      - "material.*charge"
+    response_template: "extra_charges_policy"
+    source: "cag"
+    cag_key: "extra_charges_policy"
+
+  faq_timings:
+    patterns:
+      - "timing"
+      - "working.*hour"
+      - "\\bopen\\b"
+      - "kab.*available"
+      - "kab.*milte"
+      - "hours.*operation"
+      - "business.*hours"
+    response_template: "timings_policy"
+    source: "cag"
+    cag_key: "working_hours_policy"
+
+  faq_availability:
+    patterns:
+      - "\\bavailability\\b"
+      - "available.*kab"
+      - "when.*available"
+      - "abhi.*available"
+    response_template: "availability_policy"
+    source: "cag"
+    cag_key: "availability_policy"
+
+  faq_booking_process:
+    patterns:
+      - "how.*book"
+      - "booking.*process"
+      - "kaise.*book"
+      - "booking.*kaise"
+      - "book.*karna"
+      - "process.*kya"
+    response_template: "booking_process"
+    source: "cag"
+    cag_key: "booking_process"
+
+  faq_cancellation:
+    patterns:
+      - "cancel"
+      - "refund"
+      - "cancel.*booking"
+      - "booking.*cancel"
+    response_template: "cancellation_policy"
+    source: "cag"
+    cag_key: "cancellation_policy"
+
+  faq_payment:
+    patterns:
+      - "payment"
+      - "pay.*method"
+      - "\\bcash\\b"
+      - "online.*pay"
+      - "paisa.*kaise"
+    response_template: "payment_policy"
+    source: "cag"
+    cag_key: "payment_policy"
+
+  faq_human_support:
+    patterns:
+      - "human.*support"
+      - "agent.*baat"
+      - "customer.*support"
+      - "helpline"
+      - "complaint"
+      - "shikayat"
+    response_template: "human_support"
+    source: "cag"
+    cag_key: "human_support_policy"
+
+# ── Booking signal keywords ─────────────────────────────────
+# If ANY of these appear alongside a detected service/city,
+# classify as normal_booking_request → skip FAQ handling.
+booking_signals:
+  - "book"
+  - "chahiye"
+  - "chahye"
+  - "need"
+  - "want"
+  - "find"
+  - "show"
+  - "dhundo"
+  - "dikhao"
+  - "bulao"
+  - "send"
+  - "bhejo"
+  - "mujhe"
+  - "karwana"
+  - "mangwao"
+
+# ── Response templates ───────────────────────────────────────
+# Placeholders: {cities}, {categories}, {areas}, {city},
+#   {category}, {count}, {coverage_answer}, {count_answer},
+#   {cag_policy}
+# are replaced at runtime with DatasetFacts / CAG values.
+response_templates:
+  cities_list: >
+    Our services are currently available in: {cities}.
+    Tell me your city and required service, and I'll find available providers for you.
+
+  categories_list: >
+    We currently support {count} service categories: {categories}.
+    Which service do you need?
+
+  city_areas: >
+    In {city}, we cover the following areas: {areas}.
+    Which area do you need service in?
+
+  service_coverage_check: >
+    {coverage_answer}
+
+  provider_count: >
+    {count_answer}
+
+  pricing_policy: "{cag_policy}"
+  extra_charges_policy: "{cag_policy}"
+  timings_policy: "{cag_policy}"
+  availability_policy: "{cag_policy}"
+  booking_process: "{cag_policy}"
+  cancellation_policy: "{cag_policy}"
+  payment_policy: "{cag_policy}"
+  human_support: "{cag_policy}"
+
+# Hybrid routing and confidence controls. These values are structural
+# thresholds only; business facts still come from DatasetFacts and CAG.
+routing:
+  min_confidence: 0.62
+  regex_confidence: 0.92
+  booking_signal_confidence: 0.76
+  dataset_match_min_confidence: 0.70
+  expose_diagnostics: true
+  answer_then_continue: true
+
+hybrid:
+  enabled: true
+  min_booking_signal_score: 0.70
+  min_faq_confidence: 0.62
+  continue_booking_status: "hybrid_route"
+
+semantic:
+  enabled: true
+  provider: "sentence_transformers"
+  model_id: "sentence-transformers/all-MiniLM-L6-v2"
+  threshold: 0.62
+  high_confidence_threshold: 0.76
+  max_request_chars: 300
+  cache_embeddings: true
+  lexical_fallback_enabled: true
+  examples:
+    faq_pricing:
+      - "what are the charges"
+      - "kitne paise lagenge"
+      - "plumber ka rate"
+      - "charges zyada tou nahi"
+      - "how much inspection fee"
+    faq_availability:
+      - "available today"
+      - "kal available hoge"
+      - "abhi koi available hai"
+      - "technician available in my area"
+    faq_timings:
+      - "working hours"
+      - "kab available hotay hain"
+      - "what are your timings"
+    faq_booking_process:
+      - "how do I book"
+      - "booking kaise hogi"
+      - "service book karna hai"
+    faq_cancellation:
+      - "can I cancel"
+      - "refund policy"
+      - "booking cancel karni hai"
+    faq_payment:
+      - "payment method"
+      - "cash accepted"
+      - "paisa kaise dena hai"
+    faq_extra_charges:
+      - "hidden charges"
+      - "extra charges"
+      - "parts ka alag charge"
+    faq_human_support:
+      - "talk to human"
+      - "customer support"
+      - "complaint karni hai"
+    dataset_available_cities:
+      - "which cities are covered"
+      - "yar Karachi mein kya services milti hain"
+      - "kahan available hai"
+    dataset_available_services:
+      - "what services do you provide"
+      - "kya kya service milti hain"
+      - "services list"
+    dataset_city_areas:
+      - "which areas are covered"
+      - "DHA mein available hai"
+      - "areas in city"
+    dataset_service_coverage:
+      - "do you provide electricians in Lahore"
+      - "service available in my city"
+      - "kya plumber milta hai"
+    dataset_provider_count:
+      - "how many providers"
+      - "kitne provider hain"
+      - "provider count"
+
+ambiguity:
+  enabled: true
+  entity_threshold: 0.58
+  close_match_margin: 0.12
+  max_candidates: 3
+  ask_template: "Did you mean {options}?"
+  term_candidates:
+    lumber:
+      - "Plumber"
+      - "Carpenter"

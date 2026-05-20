@@ -58,7 +58,8 @@ class ChatResponse(BaseModel):
         ...,
         description=(
             "awaiting_booking_confirmation | booking_confirmed | booking_cancelled | "
-            "needs_clarification | human_handoff_recommended | no_results | input_rejected | error"
+            "needs_clarification | faq_answered | hybrid_route | ambiguity_detected | "
+            "human_handoff_recommended | no_results | input_rejected | error"
         ),
     )
     agent_trace: list[dict] = Field(default_factory=list)
@@ -73,6 +74,10 @@ class ChatResponse(BaseModel):
     )
     providers: Optional[list[dict]] = None
     intent: Optional[dict] = None
+    routing: Optional[dict] = Field(
+        None,
+        description="Safe routing diagnostics: confidence, route source, policy source, ambiguity flags.",
+    )
     latency_ms: Optional[float] = None
 
 

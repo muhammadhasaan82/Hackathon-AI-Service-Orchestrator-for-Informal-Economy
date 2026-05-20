@@ -53,6 +53,8 @@ class SessionStore:
                 "booking": None,
                 "followup": None,
                 "awaiting_booking_confirmation": False,
+                "last_faq_topics": [],
+                "routing": {},
             },
             "reasoning_trace": [],
             "metadata": {

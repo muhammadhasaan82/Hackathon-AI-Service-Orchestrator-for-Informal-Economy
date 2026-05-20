@@ -22,11 +22,13 @@ from ..guardrails import GuardrailEngine
 from ..prompts.context_engine import ContextEngine
 from ..observability.tracing import trace_span
 from ..processing.preprocessor import load_providers, get_service_categories, get_cities, get_areas_by_city
+from ..core.dataset_facts import DatasetFacts
 from .intent_agent import IntentAgent
 from .discovery_agent import DiscoveryAgent
 from .ranking_agent import RankingAgent
 from .booking_agent import BookingAgent
 from .followup_agent import FollowUpAgent
+from .faq_agent import FAQAgent
 from .tools import format_provider_summary
 
 logger = logging.getLogger("agents.orchestrator")
@@ -69,6 +71,9 @@ class Orchestrator:
             .get("greeting", {})
         )
 
+        # Dataset facts service — zero hardcoded values
+        self.dataset_facts = DatasetFacts(self.providers_df)
+
         # Initialize retriever with full config for reranking
         retriever = ProviderRetriever(vector_store, self.configs)
 
@@ -78,6 +83,15 @@ class Orchestrator:
         self.ranking_agent = RankingAgent(llm, scoring, prompts, agents_cfg, guardrails=self.guardrails, cag_manager=self.cag_manager)
         self.booking_agent = BookingAgent(llm, self.booking_store, prompts, agents_cfg, guardrails=self.guardrails, cag_manager=self.cag_manager)
         self.followup_agent = FollowUpAgent(llm, self.booking_store, prompts, agents_cfg, guardrails=self.guardrails, cag_manager=self.cag_manager)
+
+        # FAQ agent — deterministic FAQ/general-info router
+        faq_config = self.configs.get("faq", {})
+        self.faq_agent = FAQAgent(
+            dataset_facts=self.dataset_facts,
+            cag_manager=self.cag_manager,
+            faq_config=faq_config,
+            llm=self.llm,
+        )
 
         logger.info(
             f"Orchestrator initialized | {len(self.service_categories)} categories | "
@@ -106,6 +120,39 @@ class Orchestrator:
 
     def _return_payload(self, payload: dict) -> dict:
         return self.guardrails.sanitize_payload(payload) if self.guardrails else payload
+
+    def _compose_with_hybrid_faq(self, response_text: str, faq_result: Optional[dict]) -> str:
+        if not faq_result or not faq_result.get("response"):
+            return response_text
+        faq_text = str(faq_result.get("response", "")).strip()
+        response_text = str(response_text or "").strip()
+        if not faq_text:
+            return response_text
+        if not response_text:
+            return faq_text
+        if response_text.casefold().startswith(faq_text.casefold()):
+            return response_text
+        return f"{faq_text}\n\n{response_text}"
+
+    def _routing_payload(self, faq_result: Optional[dict]) -> Optional[dict]:
+        if not faq_result:
+            return None
+        explainability = faq_result.get("explainability") or {}
+        return {
+            "primary_intent": faq_result.get("primary_intent"),
+            "secondary_intents": faq_result.get("secondary_intents", []),
+            "routing_confidence": faq_result.get("routing_confidence"),
+            "extraction_confidence": faq_result.get("extraction_confidence"),
+            "dataset_match_confidence": faq_result.get("dataset_match_confidence"),
+            "faq_confidence": explainability.get("faq_confidence"),
+            "semantic_match_score": explainability.get("semantic_match_score"),
+            "dataset_match_score": explainability.get("dataset_match_score"),
+            "fuzzy_match_used": explainability.get("fuzzy_match_used"),
+            "ambiguity_detected": explainability.get("ambiguity_detected"),
+            "policy_source": explainability.get("policy_source"),
+            "route_source": explainability.get("route_source"),
+            "should_continue_booking": faq_result.get("should_continue_booking", False),
+        }
 
     def _log_response_generation(self, start: float, status: str, response_text: str) -> None:
         logger.info(
@@ -153,6 +200,7 @@ class Orchestrator:
         reset_llm_call_budget()
         trace = []
         followup_result = None
+        hybrid_faq_result = None
 
         self.session_store.get_or_create(session_id)
         self.session_store.add_turn(session_id, "user", user_message)
@@ -201,6 +249,47 @@ class Orchestrator:
                     "latency_ms": latency_ms,
                 })
 
+            # ── FAQ / General Query Router ────────────────────────────
+            faq_result = await self.faq_agent.try_handle(user_message, session)
+            if faq_result is not None:
+                faq_trace = {
+                    "agent": "faq",
+                    "action": "hybrid_route" if faq_result.get("should_continue_booking") else "faq_route",
+                    "status": "done",
+                    "result": {
+                        "faq_class": faq_result.get("faq_class"),
+                        "secondary_intents": faq_result.get("secondary_intents", []),
+                        "source": faq_result.get("faq_source"),
+                        "routing_confidence": faq_result.get("routing_confidence"),
+                        "explainability": faq_result.get("explainability", {}),
+                    },
+                }
+                trace.append(faq_trace)
+                self.session_store.add_trace(session_id, "faq", faq_trace["action"], faq_trace["result"])
+                session["agent_state"]["last_faq_topics"] = faq_result.get("secondary_intents", [])
+                session["agent_state"]["routing"] = self._routing_payload(faq_result)
+                self.session_store.save_session(session_id, session)
+
+                if not faq_result.get("should_continue_booking"):
+                    response_text = self.guardrails.sanitize_text(faq_result["response"])
+                    self.session_store.add_turn(session_id, "assistant", response_text)
+                    latency_ms = (time.time() - start_time) * 1000
+                    logger.info(
+                        "FAQ handled | class=%s source=%s status=%s latency=%.1fms",
+                        faq_result.get("faq_class"), faq_result.get("faq_source"), faq_result.get("status"), latency_ms,
+                    )
+                    return self._return_payload({
+                        "response": response_text,
+                        "agent_trace": trace,
+                        "session_id": session_id,
+                        "status": faq_result.get("status", "faq_answered"),
+                        "intent": session.get("agent_state", {}).get("intent"),
+                        "routing": self._routing_payload(faq_result),
+                        "latency_ms": latency_ms,
+                    })
+
+                hybrid_faq_result = faq_result
+
             agent_state = session.get("agent_state", {})
             ranked_providers = agent_state.get("ranked_providers") or []
             current_intent = agent_state.get("intent") or {}
@@ -213,7 +302,11 @@ class Orchestrator:
                     session["agent_state"]["awaiting_booking_confirmation"] = False
                     self.session_store.save_session(session_id, session)
                     response_start = time.time()
-                    response_text = self.guardrails.sanitize_text(self.guardrails.rejection_message())
+                    response_text = self._compose_with_hybrid_faq(
+                        self.guardrails.rejection_message(),
+                        hybrid_faq_result,
+                    )
+                    response_text = self.guardrails.sanitize_text(response_text)
                     self._log_response_generation(response_start, "booking_cancelled", response_text)
                     self.session_store.add_turn(session_id, "assistant", response_text)
                     return self._return_payload({
@@ -223,6 +316,7 @@ class Orchestrator:
                         "status": "booking_cancelled",
                         "providers": self._provider_payload(ranked_providers),
                         "intent": current_intent,
+                        "routing": self._routing_payload(hybrid_faq_result),
                         "latency_ms": (time.time() - start_time) * 1000,
                     })
 
@@ -294,6 +388,7 @@ class Orchestrator:
                             f"{followup_result['immediate_notification'].get('body', 'Reminders will be sent before your appointment.')}\n"
                         )
 
+                    response_text = self._compose_with_hybrid_faq(response_text, hybrid_faq_result)
                     response_text = self.guardrails.sanitize_text(response_text)
                     self._log_response_generation(
                         response_start,
@@ -310,6 +405,7 @@ class Orchestrator:
                         "followup": followup_result,
                         "providers": self._provider_payload(ranked_providers),
                         "intent": current_intent,
+                        "routing": self._routing_payload(hybrid_faq_result),
                         "latency_ms": (time.time() - start_time) * 1000,
                     })
 
@@ -319,6 +415,7 @@ class Orchestrator:
                     response_text = self.guardrails.missing_selection_message()
                     if resolution.get("action") == "confirm_ambiguous":
                         response_text = self.guardrails.confirmation_prompt(len(ranked_providers[:3]), top_score)
+                    response_text = self._compose_with_hybrid_faq(response_text, hybrid_faq_result)
                     response_text = self.guardrails.sanitize_text(response_text)
                     self._log_response_generation(
                         response_start,
@@ -333,6 +430,7 @@ class Orchestrator:
                         "status": self.guardrails.booking_status("recommendation_ready", "awaiting_booking_confirmation"),
                         "providers": self._provider_payload(ranked_providers),
                         "intent": current_intent,
+                        "routing": self._routing_payload(hybrid_faq_result),
                         "latency_ms": (time.time() - start_time) * 1000,
                     })
 
@@ -377,6 +475,7 @@ class Orchestrator:
                     .get("escalation", {})
                     .get("human_handoff_message", "I want to be accurate, so I recommend a human operator review this request.")
                 )
+                handoff_message = self._compose_with_hybrid_faq(handoff_message, hybrid_faq_result)
                 handoff_message = self.guardrails.sanitize_text(handoff_message)
                 self._log_response_generation(response_start, "human_handoff_recommended", handoff_message)
                 self.session_store.add_turn(session_id, "assistant", handoff_message)
@@ -386,12 +485,14 @@ class Orchestrator:
                     "session_id": session_id,
                     "status": "human_handoff_recommended",
                     "intent": intent,
+                    "routing": self._routing_payload(hybrid_faq_result),
                     "latency_ms": (time.time() - start_time) * 1000,
                 })
 
             if intent.get("needs_clarification"):
                 response_start = time.time()
                 clarification = self.intent_agent.get_clarification_message(intent["needs_clarification"], self.configs["prompts"])
+                clarification = self._compose_with_hybrid_faq(clarification, hybrid_faq_result)
                 clarification = self.guardrails.sanitize_text(clarification)
                 self._log_response_generation(response_start, "needs_clarification", clarification)
                 trace.append({"agent": "intent", "action": "ask_clarification", "fields": intent["needs_clarification"]})
@@ -402,6 +503,7 @@ class Orchestrator:
                     "session_id": session_id,
                     "status": "needs_clarification",
                     "intent": intent,
+                    "routing": self._routing_payload(hybrid_faq_result),
                     "latency_ms": (time.time() - start_time) * 1000,
                 })
 
@@ -421,6 +523,7 @@ class Orchestrator:
             if not candidates:
                 response_start = time.time()
                 msg = "I couldn't find any providers matching your request. Please try a different service or location."
+                msg = self._compose_with_hybrid_faq(msg, hybrid_faq_result)
                 msg = self.guardrails.sanitize_text(msg)
                 self._log_response_generation(response_start, "no_results", msg)
                 self.session_store.add_turn(session_id, "assistant", msg)
@@ -430,6 +533,7 @@ class Orchestrator:
                     "session_id": session_id,
                     "status": "no_results",
                     "intent": intent,
+                    "routing": self._routing_payload(hybrid_faq_result),
                     "latency_ms": (time.time() - start_time) * 1000,
                 })
 
@@ -481,6 +585,7 @@ class Orchestrator:
                     f"{'═' * 40}\n"
                     f"{confirmation_prompt}\n"
                 )
+                response_text = self._compose_with_hybrid_faq(response_text, hybrid_faq_result)
                 response_text = self.guardrails.sanitize_text(response_text)
                 self._log_response_generation(
                     response_start,
@@ -495,6 +600,7 @@ class Orchestrator:
                     "status": self.guardrails.booking_status("recommendation_ready", "awaiting_booking_confirmation"),
                     "providers": providers_payload,
                     "intent": intent,
+                    "routing": self._routing_payload(hybrid_faq_result),
                     "latency_ms": (time.time() - start_time) * 1000,
                 })
 
@@ -563,6 +669,7 @@ class Orchestrator:
                 if followup_result.get("scheduled_reminders"):
                     response_text += f"📅 {len(followup_result['scheduled_reminders'])} reminder(s) scheduled before your appointment.\n"
 
+            response_text = self._compose_with_hybrid_faq(response_text, hybrid_faq_result)
             response_text = self.guardrails.sanitize_text(response_text)
             self._log_response_generation(
                 response_start,
@@ -579,6 +686,7 @@ class Orchestrator:
                 "followup": followup_result,
                 "providers": providers_payload,
                 "intent": intent,
+                "routing": self._routing_payload(hybrid_faq_result),
                 "latency_ms": (time.time() - start_time) * 1000,
             })
 
@@ -594,5 +702,6 @@ class Orchestrator:
                 "session_id": session_id,
                 "status": "error",
                 "error": str(e),
+                "routing": self._routing_payload(hybrid_faq_result),
                 "latency_ms": (time.time() - start_time) * 1000,
             })
