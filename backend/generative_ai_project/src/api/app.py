@@ -21,9 +21,11 @@ from ..rag.vector_store import WeaviateVectorStore
 from ..rag.indexer import index_providers
 from ..state.session_store import SessionStore
 from ..state.booking_store import BookingStore
+from ..state.user_history_store import UserHistoryStore
 from ..cag.cag_manager import CAGManager
 from ..observability.tracing import init_tracing
 from ..agents.orchestrator import Orchestrator
+from ..core.service_health import health_payload
 from .routes import router, set_dependencies
 
 logger = logging.getLogger("api.app")
@@ -127,6 +129,7 @@ async def lifespan(app: FastAPI):
     # Initialize state stores (Redis + PostgreSQL with fallbacks)
     session_store = SessionStore()
     booking_store = BookingStore()
+    user_history_store = UserHistoryStore()
 
     # Initialize orchestrator
     if vector_store:
@@ -135,6 +138,7 @@ async def lifespan(app: FastAPI):
             vector_store=vector_store,
             session_store=session_store,
             booking_store=booking_store,
+            user_history_store=user_history_store,
             cag_manager=cag_manager,
             configs=configs,
         )
@@ -142,7 +146,7 @@ async def lifespan(app: FastAPI):
         orchestrator = None
         logger.error("Orchestrator not initialized — Weaviate required")
 
-    set_dependencies(orchestrator, vector_store, session_store, start_time)
+    set_dependencies(orchestrator, vector_store, session_store, start_time, user_history_store)
 
     logger.info("═" * 60)
     logger.info(f"  System Ready | {vector_store.count if vector_store else 0} providers")
@@ -192,5 +196,12 @@ async def root():
         "stack": "LLM (configurable: transformers/Ollama/Unsloth) + Weaviate + Redis + PostgreSQL",
         "knowledge_engine": ["Agentic RAG", "Reranking", "CAG (Rust)", "Context Engineering", "LoRA Fine-Tuning"],
         "docs": "/docs",
-        "health": "/api/v1/health",
+        "health": "/health",
+        "api_health": "/api/v1/health",
     }
+
+
+@app.get("/health")
+async def root_health():
+    """Lightweight service health for VM/demo checks."""
+    return health_payload()

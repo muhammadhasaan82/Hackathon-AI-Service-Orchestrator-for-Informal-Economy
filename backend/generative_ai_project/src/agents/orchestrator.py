@@ -17,6 +17,7 @@ from ..rag.retriever import ProviderRetriever
 from ..rag.vector_store import WeaviateVectorStore
 from ..state.session_store import SessionStore
 from ..state.booking_store import BookingStore
+from ..state.user_history_store import UserHistoryStore
 from ..cag.cag_manager import CAGManager
 from ..guardrails import GuardrailEngine
 from ..prompts.context_engine import ContextEngine
@@ -42,6 +43,7 @@ class Orchestrator:
         vector_store: WeaviateVectorStore,
         session_store: Optional[SessionStore] = None,
         booking_store: Optional[BookingStore] = None,
+        user_history_store: Optional[UserHistoryStore] = None,
         cag_manager: Optional[CAGManager] = None,
         configs: Optional[dict] = None,
     ):
@@ -49,6 +51,7 @@ class Orchestrator:
         self.configs = configs or load_all_configs()
         self.session_store = session_store or SessionStore()
         self.booking_store = booking_store or BookingStore()
+        self.user_history_store = user_history_store
         self.cag_manager = cag_manager or CAGManager()
         self.guardrails = GuardrailEngine(self.configs.get("guardrails", {}))
 
@@ -119,7 +122,48 @@ class Orchestrator:
         return "".join(provider_summaries)
 
     def _return_payload(self, payload: dict) -> dict:
+        self._update_user_history_from_payload(payload)
         return self.guardrails.sanitize_payload(payload) if self.guardrails else payload
+
+    def _update_user_history_from_payload(self, payload: dict) -> None:
+        if not self.user_history_store or not getattr(self.user_history_store, "enabled", False):
+            return
+        session_id = payload.get("session_id")
+        if not session_id:
+            return
+        session = self.session_store.get_session(session_id) or {}
+        agent_state = session.get("agent_state", {}) or {}
+        history_id = agent_state.get("current_history_id")
+        if not history_id:
+            return
+
+        intent = payload.get("intent") or agent_state.get("intent") or {}
+        booking = payload.get("booking") or agent_state.get("booking") or {}
+        providers = payload.get("providers") or self._provider_payload(agent_state.get("ranked_providers"))
+        selected_provider = booking or (providers[0] if providers else {})
+        location = (
+            booking.get("location")
+            or ", ".join([value for value in [intent.get("area"), intent.get("city")] if value])
+            or None
+        )
+        routing = payload.get("routing") or agent_state.get("routing") or {}
+        reasoning = {
+            "status": payload.get("status"),
+            "routing": routing,
+            "response": payload.get("response"),
+        }
+        self.user_history_store.update_entry(
+            history_id,
+            detected_intent=routing.get("primary_intent") or payload.get("status"),
+            service_type=intent.get("service_type") or booking.get("service_type"),
+            location=location,
+            requested_time=intent.get("time_preference") or booking.get("scheduled_time"),
+            selected_provider_id=selected_provider.get("provider_id"),
+            selected_provider_name=selected_provider.get("provider_name"),
+            booking_status=(booking.get("status") if booking else None) or payload.get("status"),
+            reasoning=reasoning,
+            workflow_trace=payload.get("agent_trace", []),
+        )
 
     def _compose_with_hybrid_faq(self, response_text: str, faq_result: Optional[dict]) -> str:
         if not faq_result or not faq_result.get("response"):
@@ -205,6 +249,11 @@ class Orchestrator:
         self.session_store.get_or_create(session_id)
         self.session_store.add_turn(session_id, "user", user_message)
         session = self.session_store.get_or_create(session_id)
+        if self.user_history_store and getattr(self.user_history_store, "enabled", False):
+            history_id = self.user_history_store.create_entry(session_id=session_id, user_message=user_message)
+            if history_id:
+                session.setdefault("agent_state", {})["current_history_id"] = history_id
+                self.session_store.save_session(session_id, session)
 
         try:
             input_guardrail = self.guardrails.evaluate_input(user_message)

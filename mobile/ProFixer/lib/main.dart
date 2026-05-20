@@ -325,7 +325,7 @@ class LanguageSwitcherRow extends StatelessWidget {
   Widget _logoutBtn(BuildContext context) {
     return GestureDetector(
       onTap: () => Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const CreateAccountPage()), (r) => false),
+        MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         decoration: BoxDecoration(
@@ -872,7 +872,7 @@ class _AppNavigationWrapperState extends State<AppNavigationWrapper> {
       ),
       body: Navigator(
         key: _navKey,
-        onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const CreateAccountPage()),
+        onGenerateRoute: (_) => MaterialPageRoute(builder: (_) => const LoginPage()),
       ),
     );
   }
@@ -881,6 +881,124 @@ class _AppNavigationWrapperState extends State<AppNavigationWrapper> {
 // ══════════════════════════════════════════════════════════
 // PAGE: CREATE ACCOUNT
 // ══════════════════════════════════════════════════════════
+class LoginPage extends StatefulWidget {
+  const LoginPage({Key? key}) : super(key: key);
+  @override State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  bool _pwdHidden = true;
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  void _demoLogin() {
+    if (!_formKey.currentState!.validate()) return;
+    // TODO: Replace demo auth with BetterAuth once backend auth endpoints are added.
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isUrdu = LanguageConfiguration.of(context)?.currentLanguage == AppLanguage.urdu;
+    return Scaffold(
+      backgroundColor: AppColors.bg,
+      body: AnimatedBackgroundIcons(
+        child: SafeArea(
+          child: GestureDetector(
+            onTap: () => FocusScope.of(context).unfocus(),
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Column(children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 34),
+                  decoration: const BoxDecoration(
+                    gradient: AppGradients.hero,
+                    borderRadius: BorderRadius.vertical(bottom: Radius.circular(36)),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const LanguageSwitcherRow(),
+                    const SizedBox(height: 28),
+                    Row(children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(14)),
+                        child: const Icon(Icons.handyman_rounded, color: Colors.white, size: 24),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(LocalizedStrings.get(context, 'appName'),
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.white)),
+                    ]),
+                    const SizedBox(height: 22),
+                    const Text('Welcome back',
+                      style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900, color: Colors.white, height: 1.2)),
+                    const SizedBox(height: 8),
+                    Text('Login to continue booking trusted local services.',
+                      style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.75), height: 1.5)),
+                  ]),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 26, 20, 30),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      StyledField(
+                        controller: _emailCtrl,
+                        label: 'Email Address',
+                        hint: 'name@example.com',
+                        icon: Icons.mail_outline_rounded,
+                        isUrdu: isUrdu,
+                        keyboardType: TextInputType.emailAddress,
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) return 'Required';
+                          if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(v.trim())) return 'Invalid email';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      StyledField(
+                        controller: _passwordCtrl,
+                        label: 'Password',
+                        hint: 'Password',
+                        icon: Icons.lock_outline_rounded,
+                        isUrdu: isUrdu,
+                        isPassword: true,
+                        passwordHidden: _pwdHidden,
+                        onTogglePassword: () => setState(() => _pwdHidden = !_pwdHidden),
+                        validator: (v) => (v == null || v.length < 6) ? 'Too short' : null,
+                      ),
+                      const SizedBox(height: 30),
+                      PrimaryButton(label: 'Login', icon: Icons.login_rounded, onPressed: _demoLogin),
+                      const SizedBox(height: 18),
+                      Center(
+                        child: GestureDetector(
+                          onTap: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const CreateAccountPage())),
+                          child: const Text(
+                            'New here? Create an account',
+                            style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w800, fontSize: 13),
+                          ),
+                        ),
+                      ),
+                    ]),
+                  ),
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class CreateAccountPage extends StatefulWidget {
   const CreateAccountPage({Key? key}) : super(key: key);
   @override State<CreateAccountPage> createState() => _CreateAccountPageState();
@@ -1009,12 +1127,16 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
                           PrimaryButton(
                             label: LocalizedStrings.get(context, 'btnSignUp'),
                             icon: Icons.arrow_forward_rounded,
-                            onPressed: () { if (_formKey.currentState!.validate()) Navigator.push(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage())); },
+                            onPressed: () {
+                              if (!_formKey.currentState!.validate()) return;
+                              // TODO: Replace demo signup with BetterAuth registration when backend auth endpoints are added.
+                              Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage()));
+                            },
                           ),
                           const SizedBox(height: 20),
                           Center(
                             child: GestureDetector(
-                              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage())),
+                              onTap: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginPage())),
                               child: RichText(text: TextSpan(
                                 text: lang == AppLanguage.urdu ? 'پہلے سے اکاؤنٹ ہے؟ ' : (lang == AppLanguage.english ? 'Already have an account? ' : 'Pehle se account hai? '),
                                 style: const TextStyle(color: AppColors.textMid, fontSize: 13),

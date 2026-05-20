@@ -23,6 +23,7 @@ from .schemas import (
     CreateBookingRequest, UpdateBookingRequest, BookingListResponse,
     SessionResponse, CategoryInfo, CityInfo,
 )
+from ..core.google_maps import search_nearby_places
 
 logger = logging.getLogger("api.routes")
 
@@ -35,14 +36,16 @@ router = APIRouter(prefix="/api/v1", tags=["Service Orchestrator"])
 _orchestrator = None
 _vector_store = None
 _session_store = None
+_history_store = None
 _start_time = None
 
 
-def set_dependencies(orchestrator, vector_store, session_store, start_time):
-    global _orchestrator, _vector_store, _session_store, _start_time
+def set_dependencies(orchestrator, vector_store, session_store, start_time, history_store=None):
+    global _orchestrator, _vector_store, _session_store, _history_store, _start_time
     _orchestrator = orchestrator
     _vector_store = vector_store
     _session_store = session_store
+    _history_store = history_store
     _start_time = start_time
 
 
@@ -415,6 +418,29 @@ async def get_nearby_providers(
     return {"providers": providers, "total": len(providers), "radius_km": radius_km}
 
 
+@router.get("/maps/nearby")
+async def maps_nearby(
+    lat: float = Query(..., description="Latitude for nearby search"),
+    lng: float = Query(..., description="Longitude for nearby search"),
+    keyword: str = Query(..., description="Google Places keyword, e.g. AC technician"),
+    radius: int = Query(5000, ge=100, le=50000, description="Search radius in meters"),
+):
+    """
+    Optional Google Maps Places enrichment.
+
+    Disabled by default; mock provider dataset remains the fallback.
+    """
+    try:
+        return await search_nearby_places(lat=lat, lng=lng, keyword=keyword, radius=radius, limit=5)
+    except Exception as exc:
+        logger.warning("Google Maps nearby search failed: %s", exc)
+        return {
+            "enabled": False,
+            "results": [],
+            "message": "Google Maps request failed. Using mock provider dataset.",
+        }
+
+
 # ═══════════════════════════════════════════════════════════════
 # 3. BOOKINGS — CRUD + History
 # ═══════════════════════════════════════════════════════════════
@@ -597,6 +623,24 @@ async def get_trace(session_id: str):
 # ═══════════════════════════════════════════════════════════════
 # 5. DISCOVERY — Categories, Cities, Areas (DatasetFacts-driven)
 # ═══════════════════════════════════════════════════════════════
+
+@router.get("/history/{session_id}")
+async def get_user_history_by_session(session_id: str):
+    """Return PostgreSQL-persisted user interaction history for a session."""
+    if _history_store is None or not getattr(_history_store, "enabled", False):
+        raise HTTPException(503, detail="User history store is not connected")
+    rows = _history_store.get_by_session(session_id)
+    return {"session_id": session_id, "history": rows, "total": len(rows)}
+
+
+@router.get("/history")
+async def get_recent_user_history(limit: int = Query(20, ge=1, le=100)):
+    """Return recent PostgreSQL-persisted interaction history, newest last."""
+    if _history_store is None or not getattr(_history_store, "enabled", False):
+        raise HTTPException(503, detail="User history store is not connected")
+    rows = _history_store.get_recent(limit=limit)
+    return {"history": rows, "total": len(rows), "limit": limit}
+
 
 @router.get("/discovery/categories")
 async def get_categories():
