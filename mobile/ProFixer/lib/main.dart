@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -11,6 +12,49 @@ void main() {
 }
 
 enum AppLanguage { english, urdu, romanUrdu }
+
+// Prototype auth only.
+// TODO: Replace SharedPreferences prototype auth with BetterAuth + PostgreSQL-backed user/session tables.
+class PrototypeAuthStore {
+  static const _nameKey = 'prototype_user_name';
+  static const _emailKey = 'prototype_user_email';
+  static const _passwordKey = 'prototype_user_password';
+  static const _signedInKey = 'prototype_auth_signed_in';
+
+  static String normalizeEmail(String email) => email.trim().toLowerCase();
+
+  static Future<void> saveSignup({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_nameKey, name.trim());
+    await prefs.setString(_emailKey, normalizeEmail(email));
+    await prefs.setString(_passwordKey, password);
+    await prefs.setBool(_signedInKey, true);
+  }
+
+  static Future<String?> savedEmail() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_emailKey);
+  }
+
+  static Future<bool> passwordMatches(String password) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_passwordKey) == password;
+  }
+
+  static Future<void> markSignedIn() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_signedInKey, true);
+  }
+
+  static Future<void> logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_signedInKey, false);
+  }
+}
 
 // ── Design Tokens ──────────────────────────────────────────
 class AppColors {
@@ -324,8 +368,11 @@ class LanguageSwitcherRow extends StatelessWidget {
 
   Widget _logoutBtn(BuildContext context) {
     return GestureDetector(
-      onTap: () => Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false),
+      onTap: () {
+        PrototypeAuthStore.logout();
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false);
+      },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         decoration: BoxDecoration(
@@ -899,9 +946,32 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  void _demoLogin() {
+  void _showAuthError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: AppColors.danger),
+    );
+  }
+
+  Future<void> _demoLogin() async {
     if (!_formKey.currentState!.validate()) return;
-    // TODO: Replace demo auth with BetterAuth once backend auth endpoints are added.
+    final email = PrototypeAuthStore.normalizeEmail(_emailCtrl.text);
+    final savedEmail = await PrototypeAuthStore.savedEmail();
+
+    if (!mounted) return;
+    if (savedEmail == null || savedEmail != email) {
+      _showAuthError('No account found. Please sign up first.');
+      return;
+    }
+
+    final passwordOk = await PrototypeAuthStore.passwordMatches(_passwordCtrl.text);
+    if (!mounted) return;
+    if (!passwordOk) {
+      _showAuthError('Incorrect password.');
+      return;
+    }
+
+    await PrototypeAuthStore.markSignedIn();
+    if (!mounted) return;
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage()));
   }
 
@@ -1029,6 +1099,17 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
     });
   }
 
+  Future<void> _demoSignup() async {
+    if (!_formKey.currentState!.validate()) return;
+    await PrototypeAuthStore.saveSignup(
+      name: _nameCtrl.text,
+      email: _emailCtrl.text,
+      password: _passwordCtrl.text,
+    );
+    if (!mounted) return;
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage()));
+  }
+
   @override
   Widget build(BuildContext context) {
     final isUrdu = LanguageConfiguration.of(context)?.currentLanguage == AppLanguage.urdu;
@@ -1108,7 +1189,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
                           const SizedBox(height: 16),
                           StyledField(controller: _phoneCtrl, label: LocalizedStrings.get(context, 'mobileLabel'), hint: '03001234567', icon: Icons.phone_android_rounded, isUrdu: isUrdu, keyboardType: TextInputType.phone,
                             inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(11)],
-                            validator: (v) { if (v == null || v.isEmpty) return 'Required'; if (v.length < 11) return 'Must be 11 digits'; return null; }),
+                            validator: (v) { if (v == null || v.isEmpty) return null; if (v.length < 11) return 'Must be 11 digits'; return null; }),
                           const SizedBox(height: 16),
                           StyledField(controller: _passwordCtrl, label: LocalizedStrings.get(context, 'passwordLabel'), hint: '••••••••', icon: Icons.lock_outline_rounded, isUrdu: isUrdu,
                             isPassword: true, passwordHidden: _pwdHidden, onTogglePassword: () => setState(() => _pwdHidden = !_pwdHidden),
@@ -1127,11 +1208,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
                           PrimaryButton(
                             label: LocalizedStrings.get(context, 'btnSignUp'),
                             icon: Icons.arrow_forward_rounded,
-                            onPressed: () {
-                              if (!_formKey.currentState!.validate()) return;
-                              // TODO: Replace demo signup with BetterAuth registration when backend auth endpoints are added.
-                              Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage()));
-                            },
+                            onPressed: _demoSignup,
                           ),
                           const SizedBox(height: 20),
                           Center(
