@@ -566,7 +566,6 @@ async def get_conversation_history(
     history = _session_store.get_history(session_id, max_turns=max_turns)
     return {"session_id": session_id, "history": history, "count": len(history)}
 
-
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
     """Delete a session and its history."""
@@ -596,7 +595,7 @@ async def get_trace(session_id: str):
 
 
 # ═══════════════════════════════════════════════════════════════
-# 5. DISCOVERY — Categories, Cities, Areas
+# 5. DISCOVERY — Categories, Cities, Areas (DatasetFacts-driven)
 # ═══════════════════════════════════════════════════════════════
 
 @router.get("/discovery/categories")
@@ -605,15 +604,16 @@ async def get_categories():
     Get all service categories with metadata.
 
     Mobile app uses this for the home screen category grid.
+    All data derived dynamically from the providers dataset.
     """
     _check_init()
-    categories = _orchestrator.service_categories
+    facts = _orchestrator.dataset_facts
     result = []
-    for cat in categories:
+    for cat in facts.get_available_categories():
         result.append({
             "name": cat,
             "icon": _category_icon(cat),
-            "description": None,
+            "provider_count": facts.get_category_provider_count(cat),
         })
     return {"categories": result, "total": len(result)}
 
@@ -621,42 +621,59 @@ async def get_categories():
 @router.get("/discovery/cities")
 async def get_cities():
     """
-    Get all served cities with their areas.
+    Get all served cities with their areas and provider counts.
 
     Mobile app uses this for city/area dropdowns.
+    All data derived dynamically from the providers dataset.
     """
     _check_init()
-    df = _orchestrator.providers_df
+    facts = _orchestrator.dataset_facts
     cities_data = []
-    for city in _orchestrator.cities:
-        city_df = df[df["city"].str.lower() == city.lower()]
-        areas = sorted(city_df["area"].dropna().unique().tolist()) if "area" in city_df.columns else []
+    for city in facts.get_available_cities():
         cities_data.append({
             "name": city,
-            "areas": areas[:50],
-            "provider_count": len(city_df),
+            "areas": facts.get_areas_by_city(city),
+            "provider_count": facts.get_city_provider_count(city),
         })
-
     return {"cities": cities_data, "total": len(cities_data)}
 
 
 @router.get("/discovery/cities/{city_name}/areas")
 async def get_city_areas(city_name: str):
     """
-    Get all areas within a specific city.
+    Get all areas within a specific city with provider counts.
 
     Mobile app uses this when user selects a city for area auto-complete.
     """
     _check_init()
-    df = _orchestrator.providers_df
-    city_df = df[df["city"].str.lower() == city_name.lower()]
-
-    if city_df.empty:
+    facts = _orchestrator.dataset_facts
+    found, canonical = facts.has_city(city_name)
+    if not found:
         raise HTTPException(404, detail=f"City '{city_name}' not found")
+    areas = facts.get_areas_by_city(canonical)
+    area_details = [
+        {"name": a, "provider_count": facts.get_area_provider_count(canonical, a)}
+        for a in areas
+    ]
+    return {"city": canonical, "areas": area_details, "total": len(areas)}
 
-    areas = sorted(city_df["area"].dropna().unique().tolist()) if "area" in city_df.columns else []
 
-    return {"city": city_name, "areas": areas, "total": len(areas)}
+@router.get("/discovery/coverage")
+async def get_coverage():
+    """
+    Full dataset coverage summary.
+
+    Useful for diagnostics and mobile app startup validation.
+    """
+    _check_init()
+    facts = _orchestrator.dataset_facts
+    return {
+        "total_providers": facts.get_total_provider_count(),
+        "total_cities": len(facts.get_available_cities()),
+        "total_categories": len(facts.get_available_categories()),
+        "cities": facts.get_available_cities(),
+        "categories": facts.get_available_categories(),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════

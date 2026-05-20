@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -618,6 +619,35 @@ class BackendClient {
         .toList();
   }
 
+  /// Fetch all cities with areas and provider counts from discovery endpoint.
+  Future<List<Map<String, dynamic>>> fetchCities() async {
+    final payload = await _getJson('/api/v1/discovery/cities', {});
+    final raw = payload['cities'];
+    if (raw is! List) return [];
+    return raw.whereType<Map>().map((c) => Map<String, dynamic>.from(c)).toList();
+  }
+
+  /// Fetch all service categories with icons and provider counts.
+  Future<List<Map<String, dynamic>>> fetchCategories() async {
+    final payload = await _getJson('/api/v1/discovery/categories', {});
+    final raw = payload['categories'];
+    if (raw is! List) return [];
+    return raw.whereType<Map>().map((c) => Map<String, dynamic>.from(c)).toList();
+  }
+
+  /// Fetch areas for a specific city.
+  Future<List<String>> fetchCityAreas(String city) async {
+    try {
+      final payload = await _getJson('/api/v1/discovery/cities/$city/areas', {});
+      final raw = payload['areas'];
+      if (raw is! List) return [];
+      // areas endpoint returns objects with 'name' and 'provider_count'
+      return raw.whereType<Map>().map((a) => '${a['name'] ?? a}').toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   /// Check backend health.
   Future<Map<String, dynamic>> checkHealth() async {
     return _getJson('/api/v1/health', {});
@@ -1109,14 +1139,51 @@ class LocationPage extends StatefulWidget {
 }
 
 class _LocationPageState extends State<LocationPage> {
-  String selectedCity = 'Karachi';
-  String selectedArea = 'Saddar';
-  final List<String> citiesList = ['Karachi', 'Lahore', 'Islamabad'];
-  final Map<String, List<String>> cityAreasMap = {
-    'Karachi':   ['Saddar', 'Gulshan-e-Iqbal', 'Clifton'],
-    'Lahore':    ['Gulberg', 'DHA Phase 5', 'Johar Town'],
-    'Islamabad': ['G-11', 'F-6', 'I-9'],
-  };
+  String selectedCity = '';
+  String selectedArea = '';
+  List<String> citiesList = [];
+  Map<String, List<String>> cityAreasMap = {};
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCitiesFromBackend();
+  }
+
+  Future<void> _loadCitiesFromBackend() async {
+    try {
+      final citiesData = await BackendClient.instance.fetchCities();
+      if (!mounted) return;
+      final cities = <String>[];
+      final areasMap = <String, List<String>>{};
+      for (final c in citiesData) {
+        final name = '${c['name'] ?? ''}';
+        if (name.isEmpty) continue;
+        cities.add(name);
+        final rawAreas = c['areas'];
+        if (rawAreas is List) {
+          areasMap[name] = rawAreas.map((a) => '$a').toList();
+        } else {
+          areasMap[name] = [];
+        }
+      }
+      setState(() {
+        citiesList = cities;
+        cityAreasMap = areasMap;
+        if (cities.isNotEmpty) {
+          selectedCity = cities.first;
+          selectedArea = (areasMap[cities.first] ?? []).isNotEmpty
+              ? areasMap[cities.first]!.first
+              : '';
+        }
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
 
   Widget _dropdown({required String value, required List<String> items, required ValueChanged<String?> onChanged, required BuildContext context}) {
     final isUrdu = LanguageConfiguration.of(context)?.currentLanguage == AppLanguage.urdu;
@@ -1186,7 +1253,20 @@ class _LocationPageState extends State<LocationPage> {
               ),
 
               Expanded(
-                child: Padding(
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                    : citiesList.isEmpty
+                        ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                            const Icon(Icons.cloud_off_rounded, size: 48, color: AppColors.textLight),
+                            const SizedBox(height: 12),
+                            const Text('Could not load cities.\nCheck your connection and try again.',
+                              style: TextStyle(color: AppColors.textLight, fontSize: 13), textAlign: TextAlign.center),
+                            const SizedBox(height: 16),
+                            ElevatedButton(onPressed: () { setState(() => _loading = true); _loadCitiesFromBackend(); },
+                              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+                              child: const Text('Retry', style: TextStyle(color: Colors.white))),
+                          ]))
+                        : Padding(
                   padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
                   child: Column(
                     crossAxisAlignment: isUrdu ? CrossAxisAlignment.end : CrossAxisAlignment.start,
@@ -1194,17 +1274,26 @@ class _LocationPageState extends State<LocationPage> {
                       _label(LocalizedStrings.get(context, 'cityLabel'), Icons.location_city_rounded),
                       const SizedBox(height: 8),
                       _dropdown(value: selectedCity, items: citiesList, context: context,
-                        onChanged: (v) => setState(() { selectedCity = v!; selectedArea = cityAreasMap[selectedCity]![0]; })),
+                        onChanged: (v) => setState(() {
+                          selectedCity = v!;
+                          final areas = cityAreasMap[selectedCity] ?? [];
+                          selectedArea = areas.isNotEmpty ? areas.first : '';
+                        })),
                       const SizedBox(height: 24),
                       _label(LocalizedStrings.get(context, 'areaLabel'), Icons.map_outlined),
                       const SizedBox(height: 8),
-                      _dropdown(value: selectedArea, items: cityAreasMap[selectedCity]!, context: context,
-                        onChanged: (v) => setState(() => selectedArea = v!)),
+                      if ((cityAreasMap[selectedCity] ?? []).isNotEmpty)
+                        _dropdown(value: selectedArea, items: cityAreasMap[selectedCity]!, context: context,
+                          onChanged: (v) => setState(() => selectedArea = v!)),
+                      if ((cityAreasMap[selectedCity] ?? []).isEmpty)
+                        const Padding(padding: EdgeInsets.symmetric(vertical: 8),
+                          child: Text('No areas available', style: TextStyle(color: AppColors.textLight, fontSize: 13))),
                       const Spacer(),
                       PrimaryButton(
                         label: LocalizedStrings.get(context, 'btnNext'),
                         icon: Icons.arrow_forward_rounded,
-                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ServicesAndDetailsPage(city: selectedCity, area: selectedArea))),
+                        onPressed: selectedCity.isNotEmpty ? () => Navigator.push(context,
+                          MaterialPageRoute(builder: (_) => ServicesAndDetailsPage(city: selectedCity, area: selectedArea))) : () {},
                       ),
                     ],
                   ),
@@ -1238,9 +1327,53 @@ class ServicesAndDetailsPage extends StatefulWidget {
 class _ServicesAndDetailsPageState extends State<ServicesAndDetailsPage> {
   String chosenService = '';
   bool   loadingData   = false;
+  bool   _loadingCategories = true;
   String? providerError;
   List<ProviderModel> availableList   = [];
   List<ProviderModel> unavailableList = [];
+  List<Map<String, dynamic>> _categories = [];
+
+  // Icon mapping — visual config only, not business data.
+  // Unknown categories get a generic icon.
+  static const Map<String, String> _categoryIcons = {
+    'AC Technician': '❄️', 'Appliance Repair': '🔌',
+    'Beautician': '💄', 'Carpenter': '🪚',
+    'Cleaning Service': '🧹', 'Computer Technician': '💻',
+    'Electrician': '⚡', 'Home Tutor': '📖',
+    'Mechanic': '🔩', 'Mobile Repair': '📱',
+    'Painter': '🎨', 'Plumber': '🔧',
+    'Tutor': '📚', 'Water Tank Cleaner': '💧',
+    // Legacy name compatibility
+    'AC Repair': '❄️',
+  };
+
+  static const List<Color> _colorPalette = [
+    Color(0xFF0EA5E9), Color(0xFFF59E0B), Color(0xFF22C55E),
+    Color(0xFF8B5CF6), Color(0xFFEF4444), Color(0xFF06B6D4),
+    Color(0xFFF97316), Color(0xFF10B981), Color(0xFFEC4899),
+    Color(0xFF6366F1), Color(0xFF14B8A6), Color(0xFFD946EF),
+    Color(0xFF84CC16), Color(0xFF0284C7),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+  }
+
+  Future<void> _loadCategories() async {
+    try {
+      final cats = await BackendClient.instance.fetchCategories();
+      if (!mounted) return;
+      setState(() {
+        _categories = cats;
+        _loadingCategories = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingCategories = false);
+    }
+  }
 
   Future<void> _loadProviders(String type) async {
     setState(() {
@@ -1311,13 +1444,25 @@ class _ServicesAndDetailsPageState extends State<ServicesAndDetailsPage> {
                     Text(LocalizedStrings.get(context, 'selectServiceTitle'),
                       style: TextStyle(color: Colors.white.withOpacity(0.85), fontSize: 13, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 12),
-                    Row(children: [
-                      _serviceBtn('AC Repair',   '❄️', const Color(0xFF0EA5E9)),
-                      const SizedBox(width: 10),
-                      _serviceBtn('Plumber',     '🔧', const Color(0xFFF59E0B)),
-                      const SizedBox(width: 10),
-                      _serviceBtn('Electrician', '⚡', const Color(0xFF22C55E)),
-                    ]),
+                    if (_loadingCategories)
+                      const SizedBox(height: 72, child: Center(child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)))
+                    else if (_categories.isEmpty)
+                      const SizedBox(height: 72, child: Center(child: Text('No services available', style: TextStyle(color: Colors.white70, fontSize: 12))))
+                    else
+                      SizedBox(
+                        height: 80,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _categories.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 8),
+                          itemBuilder: (context, i) {
+                            final catName = '${_categories[i]['name'] ?? ''}';
+                            final emoji = _categoryIcons[catName] ?? '🛠️';
+                            final color = _colorPalette[i % _colorPalette.length];
+                            return SizedBox(width: 90, child: _serviceBtn(catName, emoji, color));
+                          },
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -1349,11 +1494,12 @@ class _ServicesAndDetailsPageState extends State<ServicesAndDetailsPage> {
                               _sectionHeader(LocalizedStrings.get(context, 'availableNowTitle'), AppColors.primary, Icons.check_circle_rounded, isUrdu),
                               if (availableList.isNotEmpty) _availableCard(availableList.first),
                               if (availableList.isEmpty && unavailableList.isEmpty)
-                                const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 24),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 24),
                                   child: Text(
-                                    'No matching providers found.',
-                                    style: TextStyle(color: AppColors.textLight, fontSize: 13),
+                                    'No providers found for $chosenService in ${widget.area.isNotEmpty ? '${widget.area}, ' : ''}${widget.city}.\n'
+                                    'Try selecting a different area or search across the whole city.',
+                                    style: const TextStyle(color: AppColors.textLight, fontSize: 13),
                                     textAlign: TextAlign.center,
                                   ),
                                 ),
@@ -1526,6 +1672,28 @@ class _ServicesAndDetailsPageState extends State<ServicesAndDetailsPage> {
                 decoration: BoxDecoration(
                   color: AppColors.bg,
                   borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () {
+                      // Open in Google Maps — no API key required
+                      final query = '${p.area}, ${p.city}';
+                      final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(query)}');
+                      launchUrl(url, mode: LaunchMode.externalApplication).catchError((_) => false);
+                    },
+                    child: const Icon(Icons.map_rounded, color: AppColors.primary, size: 20),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                height: 44, width: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.bg,
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: AppColors.border),
                 ),
                 child: Material(
@@ -1595,26 +1763,27 @@ class _ServicesAndDetailsPageState extends State<ServicesAndDetailsPage> {
 
   Widget _serviceBtn(String name, String emoji, Color activeColor) {
     final active = chosenService == name;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => _loadProviders(name),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          height: 72,
-          decoration: BoxDecoration(
-            color: active ? activeColor.withOpacity(0.15) : Colors.white.withOpacity(0.10),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: active ? activeColor : Colors.white.withOpacity(0.2), width: active ? 2 : 1),
-          ),
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Text(emoji, style: const TextStyle(fontSize: 22)),
-            const SizedBox(height: 4),
-            Text(LocalizedStrings.get(context, name),
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
-                color: active ? activeColor : Colors.white.withOpacity(0.8))),
-          ]),
+    return GestureDetector(
+      onTap: () => _loadProviders(name),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        height: 72,
+        decoration: BoxDecoration(
+          color: active ? activeColor.withOpacity(0.15) : Colors.white.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: active ? activeColor : Colors.white.withOpacity(0.2), width: active ? 2 : 1),
         ),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Text(emoji, style: const TextStyle(fontSize: 22)),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(LocalizedStrings.get(context, name),
+              textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700,
+                color: active ? activeColor : Colors.white.withOpacity(0.8))),
+          ),
+        ]),
       ),
     );
   }
