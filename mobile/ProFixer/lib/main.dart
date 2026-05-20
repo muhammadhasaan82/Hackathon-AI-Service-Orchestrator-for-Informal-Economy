@@ -13,46 +13,29 @@ void main() {
 
 enum AppLanguage { english, urdu, romanUrdu }
 
-// Prototype auth only.
-// TODO: Replace SharedPreferences prototype auth with BetterAuth + PostgreSQL-backed user/session tables.
-class PrototypeAuthStore {
-  static const _nameKey = 'prototype_user_name';
-  static const _emailKey = 'prototype_user_email';
-  static const _passwordKey = 'prototype_user_password';
-  static const _signedInKey = 'prototype_auth_signed_in';
+class AuthSessionStore {
+  static const _tokenKey = 'auth_access_token';
+  static const _userIdKey = 'auth_user_id';
+  static const _nameKey = 'auth_user_name';
+  static const _emailKey = 'auth_user_email';
 
   static String normalizeEmail(String email) => email.trim().toLowerCase();
 
-  static Future<void> saveSignup({
-    required String name,
-    required String email,
-    required String password,
-  }) async {
+  static Future<void> saveAuthPayload(Map<String, dynamic> payload) async {
+    final user = Map<String, dynamic>.from(payload['user'] as Map? ?? {});
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_nameKey, name.trim());
-    await prefs.setString(_emailKey, normalizeEmail(email));
-    await prefs.setString(_passwordKey, password);
-    await prefs.setBool(_signedInKey, true);
-  }
-
-  static Future<String?> savedEmail() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_emailKey);
-  }
-
-  static Future<bool> passwordMatches(String password) async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_passwordKey) == password;
-  }
-
-  static Future<void> markSignedIn() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_signedInKey, true);
+    await prefs.setString(_tokenKey, '${payload['access_token'] ?? ''}');
+    await prefs.setString(_userIdKey, '${user['id'] ?? ''}');
+    await prefs.setString(_nameKey, '${user['name'] ?? ''}');
+    await prefs.setString(_emailKey, normalizeEmail('${user['email'] ?? ''}'));
   }
 
   static Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_signedInKey, false);
+    await prefs.remove(_tokenKey);
+    await prefs.remove(_userIdKey);
+    await prefs.remove(_nameKey);
+    await prefs.remove(_emailKey);
   }
 }
 
@@ -369,7 +352,8 @@ class LanguageSwitcherRow extends StatelessWidget {
   Widget _logoutBtn(BuildContext context) {
     return GestureDetector(
       onTap: () {
-        PrototypeAuthStore.logout();
+        AuthSessionStore.logout();
+        BackendClient.instance.logout();
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const LoginPage()), (r) => false);
       },
@@ -638,6 +622,36 @@ class BackendClient {
   final HttpClient _http = HttpClient();
   String? _sessionId;
 
+  Future<Map<String, dynamic>> signup({
+    required String name,
+    required String email,
+    required String password,
+  }) {
+    return _postJson('/api/v1/auth/signup', {
+      'name': name,
+      'email': email,
+      'password': password,
+    });
+  }
+
+  Future<Map<String, dynamic>> login({
+    required String email,
+    required String password,
+  }) {
+    return _postJson('/api/v1/auth/login', {
+      'email': email,
+      'password': password,
+    });
+  }
+
+  Future<void> logout() async {
+    try {
+      await _postJson('/api/v1/auth/logout', {});
+    } catch (_) {
+      // Logout is client-side for JWT; backend call is best-effort.
+    }
+  }
+
   /// Returns current session ID, creating one from backend if needed.
   Future<String> ensureSession() async {
     if (_sessionId != null && _sessionId!.isNotEmpty) return _sessionId!;
@@ -887,6 +901,10 @@ double _asDouble(dynamic value) {
   return double.tryParse('$value') ?? 0.0;
 }
 
+String _cleanBackendError(Object error) {
+  return error.toString().replaceFirst('Bad state: ', '');
+}
+
 // ══════════════════════════════════════════════════════════
 // GLOBAL WRAPPER
 // ══════════════════════════════════════════════════════════
@@ -954,25 +972,18 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _demoLogin() async {
     if (!_formKey.currentState!.validate()) return;
-    final email = PrototypeAuthStore.normalizeEmail(_emailCtrl.text);
-    final savedEmail = await PrototypeAuthStore.savedEmail();
-
-    if (!mounted) return;
-    if (savedEmail == null || savedEmail != email) {
-      _showAuthError('No account found. Please sign up first.');
-      return;
+    try {
+      final payload = await BackendClient.instance.login(
+        email: AuthSessionStore.normalizeEmail(_emailCtrl.text),
+        password: _passwordCtrl.text,
+      );
+      await AuthSessionStore.saveAuthPayload(payload);
+      if (!mounted) return;
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage()));
+    } catch (error) {
+      if (!mounted) return;
+      _showAuthError(_cleanBackendError(error));
     }
-
-    final passwordOk = await PrototypeAuthStore.passwordMatches(_passwordCtrl.text);
-    if (!mounted) return;
-    if (!passwordOk) {
-      _showAuthError('Incorrect password.');
-      return;
-    }
-
-    await PrototypeAuthStore.markSignedIn();
-    if (!mounted) return;
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage()));
   }
 
   @override
@@ -1043,7 +1054,7 @@ class _LoginPageState extends State<LoginPage> {
                         isPassword: true,
                         passwordHidden: _pwdHidden,
                         onTogglePassword: () => setState(() => _pwdHidden = !_pwdHidden),
-                        validator: (v) => (v == null || v.length < 6) ? 'Too short' : null,
+                        validator: (v) => (v == null || v.length < 8) ? 'Minimum 8 characters' : null,
                       ),
                       const SizedBox(height: 30),
                       PrimaryButton(label: 'Login', icon: Icons.login_rounded, onPressed: _demoLogin),
@@ -1088,7 +1099,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
   void _checkStrength(String pw) {
     if (pw.isEmpty) { setState(() { _strengthText = ''; _strengthColor = Colors.transparent; _strengthProgress = 0; }); return; }
     int s = 0;
-    if (pw.length >= 6) s++;
+    if (pw.length >= 8) s++;
     if (pw.contains(RegExp(r'[A-Z]')) && pw.contains(RegExp(r'[a-z]'))) s++;
     if (pw.contains(RegExp(r'[0-9]'))) s++;
     if (pw.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) s++;
@@ -1101,13 +1112,21 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
 
   Future<void> _demoSignup() async {
     if (!_formKey.currentState!.validate()) return;
-    await PrototypeAuthStore.saveSignup(
-      name: _nameCtrl.text,
-      email: _emailCtrl.text,
-      password: _passwordCtrl.text,
-    );
-    if (!mounted) return;
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage()));
+    try {
+      final payload = await BackendClient.instance.signup(
+        name: _nameCtrl.text.trim(),
+        email: AuthSessionStore.normalizeEmail(_emailCtrl.text),
+        password: _passwordCtrl.text,
+      );
+      await AuthSessionStore.saveAuthPayload(payload);
+      if (!mounted) return;
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const WelcomeHomePage()));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_cleanBackendError(error)), backgroundColor: AppColors.danger),
+      );
+    }
   }
 
   @override
@@ -1193,7 +1212,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
                           const SizedBox(height: 16),
                           StyledField(controller: _passwordCtrl, label: LocalizedStrings.get(context, 'passwordLabel'), hint: '••••••••', icon: Icons.lock_outline_rounded, isUrdu: isUrdu,
                             isPassword: true, passwordHidden: _pwdHidden, onTogglePassword: () => setState(() => _pwdHidden = !_pwdHidden),
-                            onChanged: _checkStrength, validator: (v) => (v == null || v.length < 6) ? 'Too short' : null),
+                            onChanged: _checkStrength, validator: (v) => (v == null || v.length < 8) ? 'Minimum 8 characters' : null),
 
                           if (_passwordCtrl.text.isNotEmpty) ...[
                             const SizedBox(height: 10),

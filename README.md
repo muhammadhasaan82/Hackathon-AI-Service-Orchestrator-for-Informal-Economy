@@ -5,16 +5,18 @@ This repository is a hackathon monorepo for an agentic AI service booking system
 ## Hackathon Submission Notes
 
 - PostgreSQL stores persistent user history, service requests, booking simulation results, reasoning traces, follow-up workflow state, provider/discovery checks, and booking/state persistence.
+- Secure auth uses FastAPI + PostgreSQL + bcrypt password hashing + JWT. Raw passwords are never stored; only password hashes are persisted in PostgreSQL.
 - Redis is only for temporary session/cache state.
 - Weaviate is used/available for vector search and provider retrieval.
 - Google Maps / Places API is optional enrichment through `GET /api/v1/maps/nearby`; when disabled or missing an API key, the backend safely falls back to the mock provider dataset.
-- The Flutter mobile app includes demo-ready Login and Signup screens.
-- BetterAuth is planned for production authentication; no new auth dependency was added because BetterAuth is not currently installed/configured in the Flutter app.
+- The Flutter mobile app includes Login and Signup screens that call the FastAPI auth endpoints and store only JWT/user profile metadata locally.
+- BetterAuth is not used because the current stack is Flutter + FastAPI, not Node/Next.js.
 
-If the `user_history` table is not created automatically on startup, apply the SQL init file manually:
+If the `user_history` or `users` tables are not created automatically on startup, apply the SQL init files manually:
 
 ```bash
 docker exec -i orchestrator-postgres psql -U postgres -d service_orchestrator < backend/generative_ai_project/scripts/001_create_user_history.sql
+docker exec -i orchestrator-postgres psql -U postgres -d service_orchestrator < backend/generative_ai_project/scripts/002_create_users.sql
 ```
 
 ## Folder Structure

@@ -22,6 +22,7 @@ from ..rag.indexer import index_providers
 from ..state.session_store import SessionStore
 from ..state.booking_store import BookingStore
 from ..state.user_history_store import UserHistoryStore
+from ..state.auth_store import AuthStore
 from ..cag.cag_manager import CAGManager
 from ..observability.tracing import init_tracing
 from ..agents.orchestrator import Orchestrator
@@ -130,6 +131,7 @@ async def lifespan(app: FastAPI):
     session_store = SessionStore()
     booking_store = BookingStore()
     user_history_store = UserHistoryStore()
+    auth_store = AuthStore()
 
     # Initialize orchestrator
     if vector_store:
@@ -146,7 +148,7 @@ async def lifespan(app: FastAPI):
         orchestrator = None
         logger.error("Orchestrator not initialized — Weaviate required")
 
-    set_dependencies(orchestrator, vector_store, session_store, start_time, user_history_store)
+    set_dependencies(orchestrator, vector_store, session_store, start_time, user_history_store, auth_store)
 
     logger.info("═" * 60)
     logger.info(f"  System Ready | {vector_store.count if vector_store else 0} providers")

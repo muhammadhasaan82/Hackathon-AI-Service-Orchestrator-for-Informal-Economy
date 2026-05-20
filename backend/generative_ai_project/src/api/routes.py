@@ -11,19 +11,22 @@ Groups:
 """
 
 import logging
+import re
 import time
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from .schemas import (
+    AuthLoginRequest, AuthResponse, AuthSignupRequest,
     ChatRequest, ChatResponse, HealthResponse,
     ProviderSearchRequest, ProviderListResponse, ProviderDetailResponse,
     CreateBookingRequest, UpdateBookingRequest, BookingListResponse,
     SessionResponse, CategoryInfo, CityInfo,
 )
 from ..core.google_maps import search_nearby_places
+from ..state.auth_store import DuplicateUserError
 
 logger = logging.getLogger("api.routes")
 
@@ -37,21 +40,51 @@ _orchestrator = None
 _vector_store = None
 _session_store = None
 _history_store = None
+_auth_store = None
 _start_time = None
 
 
-def set_dependencies(orchestrator, vector_store, session_store, start_time, history_store=None):
-    global _orchestrator, _vector_store, _session_store, _history_store, _start_time
+def set_dependencies(orchestrator, vector_store, session_store, start_time, history_store=None, auth_store=None):
+    global _orchestrator, _vector_store, _session_store, _history_store, _auth_store, _start_time
     _orchestrator = orchestrator
     _vector_store = vector_store
     _session_store = session_store
     _history_store = history_store
+    _auth_store = auth_store
     _start_time = start_time
 
 
 def _check_init():
     if _orchestrator is None:
         raise HTTPException(503, detail="System not initialized. Ensure the configured model backend and Weaviate are running.")
+
+
+def _require_auth_store():
+    if _auth_store is None or not getattr(_auth_store, "enabled", False):
+        raise HTTPException(503, detail="Auth store is not connected")
+    return _auth_store
+
+
+_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+
+
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def _public_user(user: dict) -> dict:
+    return {
+        "id": user.get("id"),
+        "name": user.get("name"),
+        "email": user.get("email"),
+        "created_at": user.get("created_at"),
+    }
+
+
+def _bearer_token(authorization: Optional[str]) -> str:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, detail="Missing bearer token")
+    return authorization.split(" ", 1)[1].strip()
 
 
 def _mobile_config() -> dict:
@@ -78,6 +111,81 @@ def _chat_response_dict(result: dict, session_id: str) -> dict:
         "routing": result.get("routing"),
         "latency_ms": result.get("latency_ms"),
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# 0. AUTH — FastAPI + PostgreSQL + bcrypt + JWT
+# ═══════════════════════════════════════════════════════════════
+
+@router.post("/auth/signup", response_model=AuthResponse)
+async def auth_signup(request: AuthSignupRequest):
+    auth_store = _require_auth_store()
+    name = request.name.strip()
+    email = _normalize_email(request.email)
+    password = request.password
+
+    if not name:
+        raise HTTPException(422, detail="Name is required")
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(422, detail="Invalid email")
+    if len(password) < 8:
+        raise HTTPException(422, detail="Password must be at least 8 characters")
+    if auth_store.get_user_by_email(email):
+        raise HTTPException(409, detail="Email already registered")
+
+    try:
+        user = auth_store.create_user(
+            name=name,
+            email=email,
+            password_hash=auth_store.hash_password(password),
+        )
+    except DuplicateUserError:
+        raise HTTPException(409, detail="Email already registered")
+
+    try:
+        token = auth_store.create_access_token(user)
+    except RuntimeError as exc:
+        raise HTTPException(503, detail=str(exc))
+    return AuthResponse(user=_public_user(user), access_token=token)
+
+
+@router.post("/auth/login", response_model=AuthResponse)
+async def auth_login(request: AuthLoginRequest):
+    auth_store = _require_auth_store()
+    email = _normalize_email(request.email)
+    user = auth_store.get_user_by_email(email, include_hash=True)
+
+    if not user:
+        raise HTTPException(401, detail="No account found. Please sign up first.")
+    if not auth_store.verify_password(request.password, user["password_hash"]):
+        raise HTTPException(401, detail="Incorrect password.")
+
+    try:
+        token = auth_store.create_access_token(user)
+    except RuntimeError as exc:
+        raise HTTPException(503, detail=str(exc))
+    return AuthResponse(user=_public_user(user), access_token=token)
+
+
+@router.post("/auth/logout")
+async def auth_logout():
+    return {"status": "ok", "message": "Client token cleared"}
+
+
+@router.get("/auth/me")
+async def auth_me(authorization: Optional[str] = Header(None)):
+    auth_store = _require_auth_store()
+    token = _bearer_token(authorization)
+    try:
+        payload = auth_store.decode_access_token(token)
+        user_id = int(payload.get("sub"))
+    except Exception:
+        raise HTTPException(401, detail="Invalid or expired token")
+
+    user = auth_store.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(401, detail="Invalid or expired token")
+    return {"user": _public_user(user)}
 
 
 async def _process_chat_payload(payload: dict, default_session_id: Optional[str] = None) -> dict:

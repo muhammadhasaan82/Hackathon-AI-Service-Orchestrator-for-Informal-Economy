@@ -14,6 +14,23 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 
+class AuthSignupRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8)
+
+
+class AuthLoginRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8)
+
+
+class AuthResponse(BaseModel):
+    user: dict
+    access_token: str
+    token_type: str = "bearer"
+
+
 # ═══════════════════════════════════════════════════════════════
 # Chat
 # ═══════════════════════════════════════════════════════════════
