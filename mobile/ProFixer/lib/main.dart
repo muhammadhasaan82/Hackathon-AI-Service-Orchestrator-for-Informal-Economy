@@ -2045,6 +2045,8 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
   final List<Map<String, dynamic>> _messages = [];
   final TextEditingController _ctrl = TextEditingController();
   bool _isSending = false;
+  bool _debugMode = false;
+  final Set<int> _fullyExpandedMessages = {};
 
   @override
   void didChangeDependencies() {
@@ -2089,6 +2091,7 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
           "handoffTrace": result.handoffTrace,
           "workflowTrace": result.workflowTrace,
           "agentsUsed": result.agentsUsed,
+          "status": result.status,
         });
 
         // If booking info is present, render a styled booking card
@@ -2141,6 +2144,33 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
                 Text('AI Multi-Lang Orchestrator', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14)),
                 Text('Online • Tri-lingual support', style: TextStyle(color: Colors.white60, fontSize: 11)),
               ])),
+              IconButton(
+                icon: Icon(
+                  _debugMode ? Icons.bug_report_rounded : Icons.bug_report_outlined,
+                  color: _debugMode ? Colors.amberAccent : Colors.white,
+                  size: 20,
+                ),
+                tooltip: 'Toggle Demo/Debug Mode',
+                onPressed: () {
+                  setState(() {
+                    _debugMode = !_debugMode;
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      backgroundColor: AppColors.primary,
+                      behavior: SnackBarBehavior.floating,
+                      margin: const EdgeInsets.all(12),
+                      content: Text(
+                        _debugMode 
+                            ? 'Demo/Debug Mode Enabled (All AI workflows will be visible)'
+                            : 'Demo/Debug Mode Disabled (Only critical status workflows visible)',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                },
+              ),
               IconButton(icon: const Icon(Icons.close_rounded, color: Colors.white), onPressed: () => Navigator.pop(context)),
             ]),
           ),
@@ -2176,7 +2206,17 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
                   );
                 }
 
-                final hasTrace = !isUser && !isBooking && msg["handoffTrace"] != null && (msg["handoffTrace"] as List).isNotEmpty;
+                final msgStatus = msg["status"] ?? "";
+                final showWorkflow = _debugMode ||
+                    msgStatus == "guardrail_blocked" ||
+                    msgStatus == "awaiting_booking_confirmation" ||
+                    msgStatus == "booking_confirmed";
+
+                final hasTrace = !isUser &&
+                    !isBooking &&
+                    showWorkflow &&
+                    msg["handoffTrace"] != null &&
+                    (msg["handoffTrace"] as List).isNotEmpty;
 
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -2204,93 +2244,142 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
                           margin: const EdgeInsets.only(left: 4, bottom: 10),
                           constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
                           decoration: BoxDecoration(
-                            color: Colors.grey.shade50,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.grey.shade200),
+                            color: Colors.grey.shade50.withOpacity(0.5),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.grey.shade200.withOpacity(0.5)),
                           ),
                           child: Theme(
                             data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
                             child: ExpansionTile(
                               dense: true,
+                              tilePadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                              childrenPadding: EdgeInsets.zero,
                               title: Row(
                                 children: [
-                                  Icon(Icons.alt_route_rounded, size: 14, color: AppColors.primary),
-                                  SizedBox(width: 6),
-                                  Text(
-                                    'Agent Workflow',
+                                  Icon(Icons.alt_route_rounded, size: 12, color: AppColors.primary),
+                                  const SizedBox(width: 4),
+                                  const Text(
+                                    'AI Workflow',
                                     style: TextStyle(
-                                      fontSize: 11,
+                                      fontSize: 9.5,
                                       fontWeight: FontWeight.bold,
                                       color: AppColors.textDark,
                                     ),
                                   ),
                                 ],
                               ),
-                              children: (msg["handoffTrace"] as List).map<Widget>((entry) {
-                                final map = entry as Map<String, dynamic>;
-                                final agent = map["to_agent"] ?? "Agent";
-                                final task = map["task"] ?? "";
-                                final status = map["status"] ?? "";
-                                final summary = map["summary"] ?? "";
+                              children: () {
+                                final traceList = msg["handoffTrace"] as List;
+                                final bool isFullyExpanded = _fullyExpandedMessages.contains(i);
 
-                                final Color statusColor = status == 'blocked'
-                                    ? Colors.red
-                                    : (status == 'passed' || status == 'completed'
-                                        ? Colors.green
-                                        : Colors.orange);
-                                
-                                final IconData statusIcon = status == 'blocked'
-                                    ? Icons.cancel_rounded
-                                    : (status == 'passed' || status == 'completed'
-                                        ? Icons.check_circle_rounded
-                                        : Icons.hourglass_empty_rounded);
+                                List<dynamic> visibleItems = traceList;
+                                bool showMoreButton = false;
 
-                                return Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Icon(statusIcon, size: 12, color: statusColor),
-                                          const SizedBox(width: 6),
-                                          Text(
-                                            '${map["from_agent"] ?? "unknown"} ➔ $agent'
-                                                .replaceAll("_", " ").toUpperCase(),
-                                            style: const TextStyle(
-                                              fontSize: 9.5,
-                                              fontWeight: FontWeight.w700,
-                                              color: AppColors.textDark,
+                                if (traceList.length > 3 && !isFullyExpanded) {
+                                  visibleItems = traceList.take(3).toList();
+                                  showMoreButton = true;
+                                }
+
+                                final childrenWidgets = visibleItems.map<Widget>((entry) {
+                                  final map = entry as Map<String, dynamic>;
+                                  final agent = map["to_agent"] ?? "Agent";
+                                  final task = map["task"] ?? "";
+                                  final status = map["status"] ?? "";
+                                  final summary = map["summary"] ?? "";
+
+                                  final Color statusColor = status == 'blocked'
+                                      ? Colors.red
+                                      : (status == 'passed' || status == 'completed'
+                                          ? Colors.green
+                                          : Colors.orange);
+
+                                  final IconData statusIcon = status == 'blocked'
+                                      ? Icons.cancel_rounded
+                                      : (status == 'passed' || status == 'completed'
+                                          ? Icons.check_circle_rounded
+                                          : Icons.hourglass_empty_rounded);
+
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(statusIcon, size: 10, color: statusColor),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              '${map["from_agent"] ?? "unknown"} ➔ $agent'
+                                                  .replaceAll("_", " ").toUpperCase(),
+                                              style: const TextStyle(
+                                                fontSize: 8.5,
+                                                fontWeight: FontWeight.w700,
+                                                color: AppColors.textDark,
+                                              ),
                                             ),
-                                          ),
-                                          const Spacer(),
-                                          Text(
-                                            status.toUpperCase(),
+                                            const Spacer(),
+                                            Text(
+                                              status.toUpperCase(),
+                                              style: TextStyle(
+                                                fontSize: 8,
+                                                fontWeight: FontWeight.w800,
+                                                color: statusColor,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 1),
+                                        Padding(
+                                          padding: const EdgeInsets.only(left: 14),
+                                          child: Text(
+                                            '$task\n$summary'.trim(),
                                             style: TextStyle(
-                                              fontSize: 9,
-                                              fontWeight: FontWeight.w800,
-                                              color: statusColor,
+                                              fontSize: 8.5,
+                                              color: Colors.grey.shade600,
+                                              height: 1.2,
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Padding(
-                                        padding: const EdgeInsets.only(left: 18),
-                                        child: Text(
-                                          '$task\n$summary'.trim(),
-                                          style: TextStyle(
-                                            fontSize: 9.5,
-                                            color: Colors.grey.shade600,
-                                            height: 1.3,
                                           ),
                                         ),
+                                        const Divider(height: 6, thickness: 0.5),
+                                      ],
+                                    ),
+                                  );
+                                }).toList();
+
+                                if (showMoreButton) {
+                                  childrenWidgets.add(
+                                    InkWell(
+                                      onTap: () {
+                                        setState(() {
+                                          _fullyExpandedMessages.add(i);
+                                        });
+                                      },
+                                      child: Container(
+                                        width: double.infinity,
+                                        padding: const EdgeInsets.symmetric(vertical: 6),
+                                        alignment: Alignment.center,
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              'View full workflow (${traceList.length} steps)',
+                                              style: TextStyle(
+                                                fontSize: 8.5,
+                                                color: AppColors.primary,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 2),
+                                            Icon(Icons.keyboard_arrow_down_rounded, size: 10, color: AppColors.primary),
+                                          ],
+                                        ),
                                       ),
-                                      const Divider(height: 8),
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
+                                    ),
+                                  );
+                                }
+
+                                return childrenWidgets;
+                              }(),
                             ),
                           ),
                         ),
