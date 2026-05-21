@@ -530,6 +530,7 @@ class ChatResult {
   final Map<String, dynamic>? booking;
   final List<dynamic> handoffTrace;
   final List<dynamic> workflowTrace;
+  final List<dynamic> agentsUsed;
 
   ChatResult({
     required this.response,
@@ -539,6 +540,7 @@ class ChatResult {
     required this.booking,
     this.handoffTrace = const [],
     this.workflowTrace = const [],
+    this.agentsUsed = const [],
   });
 
   /// Whether the backend is asking the user to confirm a booking.
@@ -555,6 +557,7 @@ class ChatResult {
       booking: json['booking'] is Map ? Map<String, dynamic>.from(json['booking'] as Map) : null,
       handoffTrace: json['handoff_trace'] is List ? json['handoff_trace'] as List<dynamic> : const [],
       workflowTrace: json['workflow_trace'] is List ? json['workflow_trace'] as List<dynamic> : const [],
+      agentsUsed: json['agents_used'] is List ? json['agents_used'] as List<dynamic> : const [],
     );
   }
 }
@@ -1074,6 +1077,13 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                         ),
                       ),
+                      const SizedBox(height: 24),
+                      const Center(
+                        child: Text(
+                          "Build: New UI + Secure Auth + Agent Workflow",
+                          style: TextStyle(color: AppColors.textLight, fontSize: 10, fontWeight: FontWeight.w600),
+                        ),
+                      ),
                     ]),
                   ),
                 ),
@@ -1339,12 +1349,22 @@ class WelcomeHomePage extends StatelessWidget {
 
               Padding(
                 padding: const EdgeInsets.only(bottom: 18),
-                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  Container(width: 7, height: 7, decoration: const BoxDecoration(color: AppColors.primaryLight, shape: BoxShape.circle)),
-                  const SizedBox(width: 8),
-                  Text(LocalizedStrings.get(context, 'chatPrompt'),
-                    style: const TextStyle(fontSize: 12, color: AppColors.textLight, fontWeight: FontWeight.w500)),
-                ]),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Container(width: 7, height: 7, decoration: const BoxDecoration(color: AppColors.primaryLight, shape: BoxShape.circle)),
+                      const SizedBox(width: 8),
+                      Text(LocalizedStrings.get(context, 'chatPrompt'),
+                        style: const TextStyle(fontSize: 12, color: AppColors.textLight, fontWeight: FontWeight.w500)),
+                    ]),
+                    const SizedBox(height: 8),
+                    const Text(
+                      "Build: New UI + Secure Auth + Agent Workflow",
+                      style: TextStyle(color: AppColors.textLight, fontSize: 10, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -2057,11 +2077,18 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
       final result = await BackendClient.instance.sendChat(txt);
       if (!mounted) return;
       setState(() {
+        // Print workflow traces for demo/debug
+        debugPrint("Demo/Debug: handoff_trace: ${result.handoffTrace}");
+        debugPrint("Demo/Debug: workflow_trace: ${result.workflowTrace}");
+        debugPrint("Demo/Debug: agents_used: ${result.agentsUsed}");
+
         // Add AI response text
         _messages.add({
           "sender": "bot",
           "text": result.response,
           "handoffTrace": result.handoffTrace,
+          "workflowTrace": result.workflowTrace,
+          "agentsUsed": result.agentsUsed,
         });
 
         // If booking info is present, render a styled booking card
@@ -2228,9 +2255,10 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
                                           Icon(statusIcon, size: 12, color: statusColor),
                                           const SizedBox(width: 6),
                                           Text(
-                                            agent.replaceAll("_", " ").toUpperCase(),
+                                            '${map["from_agent"] ?? "unknown"} ➔ $agent'
+                                                .replaceAll("_", " ").toUpperCase(),
                                             style: const TextStyle(
-                                              fontSize: 10,
+                                              fontSize: 9.5,
                                               fontWeight: FontWeight.w700,
                                               color: AppColors.textDark,
                                             ),
