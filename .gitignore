@@ -38,6 +38,7 @@ uv.lock
 
 # Generated datasets
 service_providers_50000.csv
+FIRST_RELEASE_README.md
 
 # Logs
 logs/

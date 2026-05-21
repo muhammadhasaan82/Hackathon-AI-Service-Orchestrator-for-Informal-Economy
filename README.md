@@ -123,6 +123,60 @@ Google Maps Places is implemented as optional enrichment, not as a hard dependen
 
 No API keys or private secrets are committed to the repository. Runtime secrets such as `JWT_SECRET`, database URLs, and Google Maps keys must be supplied through environment variables.
 
+## Dataset Analysis
+
+The provider dataset is intentionally broad enough to demonstrate city-level discovery, area filtering, category matching, and transparent ranking. It contains 50,000 synthetic service-provider records distributed across 6 Pakistani cities, 30 local areas, and 14 service categories.
+
+### City Coverage
+
+| City | Provider Count | Share of Dataset |
+|---|---:|---:|
+| Rawalpindi | 8,435 | 16.87% |
+| Lahore | 8,393 | 16.79% |
+| Karachi | 8,378 | 16.76% |
+| Faisalabad | 8,309 | 16.62% |
+| Peshawar | 8,290 | 16.58% |
+| Islamabad | 8,195 | 16.39% |
+| **Total** | **50,000** | **100.00%** |
+
+### Service Category Distribution
+
+| Service Category | Provider Count |
+|---|---:|
+| Cleaning Service | 3,675 |
+| Beautician | 3,643 |
+| Home Tutor | 3,617 |
+| AC Technician | 3,613 |
+| Tutor | 3,583 |
+| Electrician | 3,581 |
+| Mobile Repair | 3,578 |
+| Water Tank Cleaner | 3,561 |
+| Plumber | 3,558 |
+| Appliance Repair | 3,539 |
+| Carpenter | 3,528 |
+| Mechanic | 3,519 |
+| Computer Technician | 3,512 |
+| Painter | 3,493 |
+| **Total** | **50,000** |
+
+### Area Coverage by City
+
+| City | Areas Covered | Area Provider Totals |
+|---|---:|---|
+| Faisalabad | 3 | D Ground 2,778; Madina Town 2,790; Peoples Colony 2,741 |
+| Islamabad | 5 | Bahria Town 1,569; Blue Area 1,666; F-10 1,614; G-13 1,683; I-8 1,663 |
+| Karachi | 7 | Clifton 1,214; DHA 1,220; Gulshan 1,193; Korangi 1,151; Malir 1,205; Nazimabad 1,206; North Nazimabad 1,189 |
+| Lahore | 5 | Bahria Town 1,687; DHA 1,696; Gulberg 1,611; Johar Town 1,699; Model Town 1,700 |
+| Peshawar | 3 | Cantt 2,816; Hayatabad 2,680; University Town 2,794 |
+| Rawalpindi | 4 | Bahria Town 2,113; Chaklala 2,170; PWD 2,080; Saddar 2,072 |
+
+### Dataset Design Notes
+
+- City distribution is intentionally balanced, with each city contributing roughly 16-17% of the dataset.
+- Service categories are also balanced, with each category contributing roughly 3,493 to 3,675 providers.
+- Area-level density supports realistic filtering such as "plumber in DHA", "AC technician in Hayatabad", or "tutor near Gulshan".
+- The balanced synthetic distribution helps evaluate retrieval, ranking, and fallback behavior without depending on live provider availability.
+
 ## Mock and Real APIs Used
 
 ### Mock / Simulated Components
