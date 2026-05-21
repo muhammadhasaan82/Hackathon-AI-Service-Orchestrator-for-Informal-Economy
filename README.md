@@ -125,6 +125,8 @@ No API keys or private secrets are committed to the repository. Runtime secrets 
 
 ## Dataset Analysis
 
+![Data analysis summary table](DATA%20ANALYSIS.jpeg)
+
 The provider dataset is intentionally broad enough to demonstrate city-level discovery, area filtering, category matching, and transparent ranking. It contains 50,000 synthetic service-provider records distributed across 6 Pakistani cities, 30 local areas, and 14 service categories.
 
 ### City Coverage
