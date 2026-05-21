@@ -528,6 +528,8 @@ class ChatResult {
   final String sessionId;
   final List<dynamic> providers;
   final Map<String, dynamic>? booking;
+  final List<dynamic> handoffTrace;
+  final List<dynamic> workflowTrace;
 
   ChatResult({
     required this.response,
@@ -535,6 +537,8 @@ class ChatResult {
     required this.sessionId,
     required this.providers,
     required this.booking,
+    this.handoffTrace = const [],
+    this.workflowTrace = const [],
   });
 
   /// Whether the backend is asking the user to confirm a booking.
@@ -549,6 +553,8 @@ class ChatResult {
       sessionId: '${json['session_id'] ?? ''}',
       providers: json['providers'] is List ? json['providers'] as List<dynamic> : const [],
       booking: json['booking'] is Map ? Map<String, dynamic>.from(json['booking'] as Map) : null,
+      handoffTrace: json['handoff_trace'] is List ? json['handoff_trace'] as List<dynamic> : const [],
+      workflowTrace: json['workflow_trace'] is List ? json['workflow_trace'] as List<dynamic> : const [],
     );
   }
 }
@@ -2016,7 +2022,7 @@ class ChatBotWidget extends StatefulWidget {
 }
 
 class _ChatBotWidgetState extends State<ChatBotWidget> {
-  final List<Map<String, String>> _messages = [];
+  final List<Map<String, dynamic>> _messages = [];
   final TextEditingController _ctrl = TextEditingController();
   bool _isSending = false;
 
@@ -2052,7 +2058,11 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
       if (!mounted) return;
       setState(() {
         // Add AI response text
-        _messages.add({"sender": "bot", "text": result.response});
+        _messages.add({
+          "sender": "bot",
+          "text": result.response,
+          "handoffTrace": result.handoffTrace,
+        });
 
         // If booking info is present, render a styled booking card
         if (result.booking != null) {
@@ -2139,23 +2149,124 @@ class _ChatBotWidgetState extends State<ChatBotWidget> {
                   );
                 }
 
+                final hasTrace = !isUser && !isBooking && msg["handoffTrace"] != null && (msg["handoffTrace"] as List).isNotEmpty;
+
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-                    decoration: BoxDecoration(
-                      gradient: isUser ? AppGradients.primary : null,
-                      color: isUser ? null : AppColors.bg,
-                      borderRadius: BorderRadius.only(
-                        topLeft: const Radius.circular(16), topRight: const Radius.circular(16),
-                        bottomLeft: Radius.circular(isUser ? 16 : 4),
-                        bottomRight: Radius.circular(isUser ? 4 : 16),
+                  child: Column(
+                    crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                        decoration: BoxDecoration(
+                          gradient: isUser ? AppGradients.primary : null,
+                          color: isUser ? null : AppColors.bg,
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(16), topRight: const Radius.circular(16),
+                            bottomLeft: Radius.circular(isUser ? 16 : 4),
+                            bottomRight: Radius.circular(isUser ? 4 : 16),
+                          ),
+                          boxShadow: [BoxShadow(color: AppColors.cardShadow, blurRadius: 6, offset: const Offset(0, 2))],
+                        ),
+                        child: Text(msg["text"]!, style: TextStyle(color: isUser ? Colors.white : AppColors.textDark, fontSize: 13, height: 1.4)),
                       ),
-                      boxShadow: [BoxShadow(color: AppColors.cardShadow, blurRadius: 6, offset: const Offset(0, 2))],
-                    ),
-                    child: Text(msg["text"]!, style: TextStyle(color: isUser ? Colors.white : AppColors.textDark, fontSize: 13, height: 1.4)),
+                      if (hasTrace)
+                        Container(
+                          margin: const EdgeInsets.only(left: 4, bottom: 10),
+                          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey.shade200),
+                          ),
+                          child: Theme(
+                            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                            child: ExpansionTile(
+                              dense: true,
+                              title: Row(
+                                children: [
+                                  Icon(Icons.alt_route_rounded, size: 14, color: AppColors.primary),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Agent Workflow',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: AppColors.textDark,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              children: (msg["handoffTrace"] as List).map<Widget>((entry) {
+                                final map = entry as Map<String, dynamic>;
+                                final agent = map["to_agent"] ?? "Agent";
+                                final task = map["task"] ?? "";
+                                final status = map["status"] ?? "";
+                                final summary = map["summary"] ?? "";
+
+                                final Color statusColor = status == 'blocked'
+                                    ? Colors.red
+                                    : (status == 'passed' || status == 'completed'
+                                        ? Colors.green
+                                        : Colors.orange);
+                                
+                                final IconData statusIcon = status == 'blocked'
+                                    ? Icons.cancel_rounded
+                                    : (status == 'passed' || status == 'completed'
+                                        ? Icons.check_circle_rounded
+                                        : Icons.hourglass_empty_rounded);
+
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(statusIcon, size: 12, color: statusColor),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            agent.replaceAll("_", " ").toUpperCase(),
+                                            style: const TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w700,
+                                              color: AppColors.textDark,
+                                            ),
+                                          ),
+                                          const Spacer(),
+                                          Text(
+                                            status.toUpperCase(),
+                                            style: TextStyle(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.w800,
+                                              color: statusColor,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Padding(
+                                        padding: const EdgeInsets.only(left: 18),
+                                        child: Text(
+                                          '$task\n$summary'.trim(),
+                                          style: TextStyle(
+                                            fontSize: 9.5,
+                                            color: Colors.grey.shade600,
+                                            height: 1.3,
+                                          ),
+                                        ),
+                                      ),
+                                      const Divider(height: 8),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 );
               },

@@ -110,6 +110,11 @@ def _chat_response_dict(result: dict, session_id: str) -> dict:
         "intent": result.get("intent"),
         "routing": result.get("routing"),
         "latency_ms": result.get("latency_ms"),
+        "guardrail": result.get("guardrail"),
+        "language_detected": result.get("language_detected"),
+        "agents_used": result.get("agents_used"),
+        "handoff_trace": result.get("handoff_trace"),
+        "workflow_trace": result.get("workflow_trace") or result.get("agent_trace", []),
     }
 
 

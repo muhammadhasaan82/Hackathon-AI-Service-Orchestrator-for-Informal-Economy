@@ -121,7 +121,153 @@ class Orchestrator:
             provider_summaries.append(f"\n{'─' * 40}\nOption {i}:\n{summary}")
         return "".join(provider_summaries)
 
+    def _compile_traces(self, trace: list[dict], status: str, intent: Optional[dict], booking: Optional[dict]) -> tuple[list[str], list[dict], list[dict]]:
+        agents_used = ["triage_orchestrator", "guardrail_agent"]
+        handoff_trace = [
+            {
+                "from_agent": "triage_orchestrator",
+                "to_agent": "guardrail_agent",
+                "task": "Validate safety, scope, privacy, and prompt injection risks",
+                "status": "passed",
+                "summary": "Request is safe and allowed."
+            }
+        ]
+
+        # Scan trace for executed agents
+        has_faq = any(t.get("agent") == "faq" for t in trace)
+        has_intent = any(t.get("agent") == "intent" for t in trace)
+        has_discovery = any(t.get("agent") == "discovery" for t in trace)
+        has_ranking = any(t.get("agent") == "ranking" for t in trace)
+        has_booking = any(t.get("agent") == "booking" for t in trace)
+        has_followup = any(t.get("agent") == "followup" for t in trace)
+
+        if has_faq:
+            agents_used.append("faq_agent")
+            handoff_trace.append({
+                "from_agent": "triage_orchestrator",
+                "to_agent": "faq_agent",
+                "task": "Answer general-info or FAQ query",
+                "status": "completed",
+                "summary": "FAQ query answered dynamically using dataset facts."
+            })
+
+        if has_intent:
+            agents_used.append("intent_agent")
+            intent_status = "completed"
+            intent_summary = "Detected service, location, and language."
+            if intent and intent.get("needs_clarification"):
+                intent_status = "needs_clarification"
+                intent_summary = f"Missing context for: {', '.join(intent.get('needs_clarification'))}."
+            elif status == "human_handoff_recommended":
+                intent_status = "escalated"
+                intent_summary = "Ambiguity or escalation threshold reached."
+
+            handoff_trace.append({
+                "from_agent": "triage_orchestrator",
+                "to_agent": "intent_agent",
+                "task": "Extract service, city, area, time, urgency, and language",
+                "status": intent_status,
+                "summary": intent_summary
+            })
+
+        if has_discovery:
+            agents_used.append("discovery_agent")
+            handoff_trace.append({
+                "from_agent": "triage_orchestrator",
+                "to_agent": "discovery_agent",
+                "task": "Find matching providers",
+                "status": "completed",
+                "summary": "Provider candidates retrieved."
+            })
+
+        if has_ranking:
+            agents_used.append("ranking_agent")
+            handoff_trace.append({
+                "from_agent": "triage_orchestrator",
+                "to_agent": "ranking_agent",
+                "task": "Rank providers using rating, availability, verification, response time, and price",
+                "status": "completed",
+                "summary": "Top providers ranked."
+            })
+
+        if has_booking or status == "awaiting_booking_confirmation":
+            agents_used.append("booking_agent")
+            booking_status = "completed" if (booking and booking.get("status") == "CONFIRMED") else "awaiting_user_confirmation"
+            booking_summary = "Booking successfully created." if booking_status == "completed" else "Waiting for user to select a provider."
+            handoff_trace.append({
+                "from_agent": "triage_orchestrator",
+                "to_agent": "booking_agent",
+                "task": "Prepare booking confirmation",
+                "status": booking_status,
+                "summary": booking_summary
+            })
+
+        if has_followup:
+            agents_used.append("followup_agent")
+            handoff_trace.append({
+                "from_agent": "triage_orchestrator",
+                "to_agent": "followup_agent",
+                "task": "Schedule reminders and follow-up notifications",
+                "status": "completed",
+                "summary": "Follow-up pipeline configured."
+            })
+
+        # Fallback if no specific agent was triggered but we are in booking flow
+        if not (has_faq or has_intent or has_discovery or has_ranking or has_booking or has_followup):
+            if status in ("awaiting_booking_confirmation", "booking_confirmed", "booking_cancelled"):
+                agents_used.append("booking_agent")
+                handoff_trace.append({
+                    "from_agent": "triage_orchestrator",
+                    "to_agent": "booking_agent",
+                    "task": "Prepare booking confirmation",
+                    "status": "completed" if status == "booking_confirmed" else ("cancelled" if status == "booking_cancelled" else "awaiting_user_confirmation"),
+                    "summary": "Booking successfully created." if status == "booking_confirmed" else ("Booking rejected by user." if status == "booking_cancelled" else "Waiting for user to select a provider.")
+                })
+
+        seen = set()
+        agents_used = [x for x in agents_used if not (x in seen or seen.add(x))]
+
+        workflow_trace = []
+        for t in trace:
+            workflow_trace.append({
+                "agent": t.get("agent", "orchestrator"),
+                "action": t.get("action", ""),
+                "status": t.get("status", "done"),
+                "result": t.get("result"),
+                "error": t.get("error")
+            })
+
+        return agents_used, handoff_trace, workflow_trace
+
     def _return_payload(self, payload: dict) -> dict:
+        # Apply multilingual response formatting
+        session_id = payload.get("session_id")
+        session = self.session_store.get_session(session_id) or {} if session_id else {}
+        agent_state = session.get("agent_state", {}) or {}
+        lang = payload.get("language_detected") or agent_state.get("language_detected") or "english"
+        payload["language_detected"] = lang
+
+        if lang in ("roman_urdu", "urdu") and payload.get("response"):
+            from ..core.guardrails import translate_response
+            payload["response"] = translate_response(payload["response"], lang)
+
+        # Inject dynamic agents traces for successful/failed responses (if allowed and not already populated)
+        if "agents_used" not in payload:
+            agents_used, handoff_trace, workflow_trace = self._compile_traces(
+                payload.get("agent_trace", []),
+                payload.get("status", "unknown"),
+                payload.get("intent"),
+                payload.get("booking")
+            )
+            payload["guardrail"] = payload.get("guardrail") or {
+                "allowed": True,
+                "category": "safe",
+                "reason": "Passed safety and scope checks."
+            }
+            payload["agents_used"] = agents_used
+            payload["handoff_trace"] = handoff_trace
+            payload["workflow_trace"] = workflow_trace
+
         self._update_user_history_from_payload(payload)
         return self.guardrails.sanitize_payload(payload) if self.guardrails else payload
 
@@ -151,6 +297,10 @@ class Orchestrator:
             "status": payload.get("status"),
             "routing": routing,
             "response": payload.get("response"),
+            "language_detected": payload.get("language_detected"),
+            "guardrail": payload.get("guardrail"),
+            "agents_used": payload.get("agents_used"),
+            "handoff_trace": payload.get("handoff_trace"),
         }
         self.user_history_store.update_entry(
             history_id,
@@ -162,7 +312,7 @@ class Orchestrator:
             selected_provider_name=selected_provider.get("provider_name"),
             booking_status=(booking.get("status") if booking else None) or payload.get("status"),
             reasoning=reasoning,
-            workflow_trace=payload.get("agent_trace", []),
+            workflow_trace=payload.get("workflow_trace") or payload.get("agent_trace", []),
         )
 
     def _compose_with_hybrid_faq(self, response_text: str, faq_result: Optional[dict]) -> str:
@@ -254,6 +404,57 @@ class Orchestrator:
             if history_id:
                 session.setdefault("agent_state", {})["current_history_id"] = history_id
                 self.session_store.save_session(session_id, session)
+
+        # 1. Evaluate guardrails first
+        from ..core.guardrails import evaluate_guardrails, translate_response
+        guard_res = evaluate_guardrails(user_message)
+        lang_detected = guard_res["language_detected"]
+        session.setdefault("agent_state", {})["language_detected"] = lang_detected
+
+        if not guard_res["allowed"]:
+            response_text = guard_res["message"]
+            status = "guardrail_blocked"
+            
+            trace.append({
+                "agent": "guardrail_agent",
+                "action": "evaluate_guardrails",
+                "status": "blocked",
+                "result": {"category": guard_res["category"], "reason": guard_res["reason"]},
+            })
+            self.session_store.add_trace(session_id, "guardrail_agent", "evaluate_guardrails", guard_res)
+            
+            self.session_store.add_turn(session_id, "assistant", response_text)
+            
+            handoff_trace = [
+                {
+                    "from_agent": "triage_orchestrator",
+                    "to_agent": "guardrail_agent",
+                    "task": "Validate safety, scope, privacy, and prompt injection risks",
+                    "status": "blocked",
+                    "summary": f"Request blocked due to {guard_res['category']} risk: {guard_res['reason']}"
+                }
+            ]
+            workflow_trace = handoff_trace
+
+            return self._return_payload({
+                "response": response_text,
+                "agent_trace": trace,
+                "session_id": session_id,
+                "status": status,
+                "providers": None,
+                "intent": None,
+                "routing": {"primary_intent": "guardrail_blocked", "route_source": "guardrail"},
+                "latency_ms": (time.time() - start_time) * 1000,
+                "guardrail": {
+                    "allowed": False,
+                    "category": guard_res["category"],
+                    "reason": guard_res["reason"],
+                },
+                "language_detected": lang_detected,
+                "agents_used": ["triage_orchestrator", "guardrail_agent"],
+                "handoff_trace": handoff_trace,
+                "workflow_trace": workflow_trace,
+            })
 
         try:
             input_guardrail = self.guardrails.evaluate_input(user_message)
