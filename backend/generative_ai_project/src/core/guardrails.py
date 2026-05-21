@@ -366,10 +366,92 @@ def translate_response(text: str, language: str) -> str:
     Translate dynamic system messages in response based on user language.
     Does not translate provider names, cities, or categories.
     """
-    if not text or language not in TRANSLATIONS:
+    if not text:
         return text
     
     translated = text
+    
+    if language == "roman_urdu":
+        # 1. Translate "I ranked these providers..." -> "Maine providers ko rating, availability, experience, response time aur price ke basis par rank kiya hai."
+        translated = re.sub(
+            r"I\s+ranked\s+these\s+providers[\s\S]*?price\s+fit\.?",
+            "Maine providers ko rating, availability, experience, response time aur price ke basis par rank kiya hai.",
+            translated,
+            flags=re.IGNORECASE
+        )
+        translated = re.sub(
+            r"I\s+ranked\s+these\s+providers[^\n]*",
+            "Maine providers ko rating, availability, experience, response time aur price ke basis par rank kiya hai.",
+            translated,
+            flags=re.IGNORECASE
+        )
+        
+        # 2. Translate "strongest signals" -> "sab se strong signals"
+        translated = re.sub(
+            r"\bstrongest\s+signals\b",
+            "sab se strong signals",
+            translated,
+            flags=re.IGNORECASE
+        )
+        
+        # 3. Translate "BOOKING CONFIRMATION REQUIRED" -> "BOOKING CONFIRM KARNA ZAROORI HAI"
+        translated = re.sub(
+            r"\bBOOKING\s+CONFIRMATION\s+REQUIRED\b",
+            "BOOKING CONFIRM KARNA ZAROORI HAI",
+            translated,
+            flags=re.IGNORECASE
+        )
+        
+        # 4. Translate "I’ve shortlisted 3 providers..." -> "Maine 3 providers shortlist kiye hain. Booking confirm karne ke liye 'book option 1', 'book option 2', ya provider ka naam reply karein."
+        translated = re.sub(
+            r"I[’']ve\s+shortlisted\s+(\d+)\s+providers?[\s\S]*?confirm\s+the\s+booking\.?",
+            r"Maine \1 providers shortlist kiye hain. Booking confirm karne ke liye 'book option 1', 'book option 2', ya provider ka naam reply karein.",
+            translated,
+            flags=re.IGNORECASE
+        )
+
+    elif language == "urdu":
+        # 1. Translate "I ranked these providers..." -> "میں نے فراہم کنندگان کو ریٹنگ، دستیابی، تجربہ، جوابی وقت، اور قیمت کی بنیاد پر درجہ بندی کیا ہے۔"
+        translated = re.sub(
+            r"I\s+ranked\s+these\s+providers[\s\S]*?price\s+fit\.?",
+            "میں نے فراہم کنندگان کو ریٹنگ، دستیابی، تجربہ، جوابی وقت، اور قیمت کی بنیاد پر درجہ بندی کیا ہے۔",
+            translated,
+            flags=re.IGNORECASE
+        )
+        translated = re.sub(
+            r"I\s+ranked\s+these\s+providers[^\n]*",
+            "میں نے فراہم کنندگان کو ریٹنگ، دستیابی، تجربہ، جوابی وقت، اور قیمت کی بنیاد پر درجہ بندی کیا ہے۔",
+            translated,
+            flags=re.IGNORECASE
+        )
+        
+        # 2. Translate "strongest signals" -> "سب سے مضبوط سگنلز"
+        translated = re.sub(
+            r"\bstrongest\s+signals\b",
+            "سب سے مضبوط سگنلز",
+            translated,
+            flags=re.IGNORECASE
+        )
+        
+        # 3. Translate "BOOKING CONFIRMATION REQUIRED" -> "بکنگ کی تصدیق درکار ہے"
+        translated = re.sub(
+            r"\bBOOKING\s+CONFIRMATION\s+REQUIRED\b",
+            "بکنگ کی تصدیق درکار ہے",
+            translated,
+            flags=re.IGNORECASE
+        )
+        
+        # 4. Translate "I’ve shortlisted 3 providers..." -> "میں نے \1 فراہم کنندگان کو شارٹ لسٹ کیا ہے۔ بکنگ کی تصدیق کے لیے 'book option 1'، 'book option 2'، یا فراہم کنندہ کا نام لکھ کر جواب دیں۔"
+        translated = re.sub(
+            r"I[’']ve\s+shortlisted\s+(\d+)\s+providers?[\s\S]*?confirm\s+the\s+booking\.?",
+            r"میں نے \1 فراہم کنندگان کو شارٹ لسٹ کیا ہے۔ بکنگ کی تصدیق کے لیے 'book option 1'، 'book option 2'، یا فراہم کنندہ کا نام لکھ کر جواب دیں۔",
+            translated,
+            flags=re.IGNORECASE
+        )
+
+    if language not in TRANSLATIONS:
+        return translated
+    
     lang_map = TRANSLATIONS[language]
     
     # Sort keys by length descending to replace longer phrases first

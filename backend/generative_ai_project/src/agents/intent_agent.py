@@ -62,6 +62,190 @@ class IntentAgent:
         self.guardrails = guardrails
         self.cag_manager = cag_manager
 
+    def _extract_deterministic_urdu_roman(
+        self,
+        text: str,
+        categories: list[str],
+        cities: list[str],
+        areas: Optional[list[str]] = None,
+    ) -> dict:
+        import re
+        text_lower = text.lower()
+        
+        extracted_service = None
+        extracted_city = None
+        extracted_area = None
+        
+        # Urdu/Roman Urdu/English service keyword mapping
+        urdu_service_map = {
+            "پلمبر": "Plumber",
+            "plumber": "Plumber",
+            "الیکٹریشن": "Electrician",
+            "electrician": "Electrician",
+            "اے سی": "AC Technician",
+            "ac": "AC Technician",
+            "ac technician": "AC Technician",
+            "مکینک": "Mechanic",
+            "mechanic": "Mechanic",
+            "ٹیوٹر": "Tutor",
+            "tutor": "Tutor",
+            "کارپینٹر": "Carpenter",
+            "carpenter": "Carpenter",
+            "پینٹر": "Painter",
+            "painter": "Painter",
+            "صفائی": "Cleaning Service",
+            "cleaning": "Cleaning Service",
+            "موبائل": "Mobile Repair",
+            "mobile repair": "Mobile Repair",
+            "موبائل ریپیئر": "Mobile Repair",
+            "کمپیوٹر": "Computer Technician",
+            "computer technician": "Computer Technician",
+            "کمپیوٹر ٹیکنیشن": "Computer Technician"
+        }
+
+        # Urdu/Roman/English city mapping
+        urdu_city_map = {
+            "کراچی": "Karachi",
+            "karachi": "Karachi",
+            "لاہور": "Lahore",
+            "lahore": "Lahore",
+            "اسلام آباد": "Islamabad",
+            "اسلام‌آباد": "Islamabad",
+            "islamabad": "Islamabad",
+            "فیصل آباد": "Faisalabad",
+            "فیصل‌آباد": "Faisalabad",
+            "faisalabad": "Faisalabad",
+            "پشاور": "Peshawar",
+            "peshawar": "Peshawar",
+            "راولپنڈی": "Rawalpindi",
+            "rawalpindi": "Rawalpindi"
+        }
+
+        # Urdu/Roman/English area mapping
+        urdu_area_map = {
+            # Karachi
+            "کلفٹن": "Clifton",
+            "clifton": "Clifton",
+            "ڈی ایچ اے": "DHA",
+            "dha": "DHA",
+            "گلشن": "Gulshan",
+            "gulshan": "Gulshan",
+            "کورنگی": "Korangi",
+            "korangi": "Korangi",
+            "ملیر": "Malir",
+            "malir": "Malir",
+            "ناظم آباد": "Nazimabad",
+            "ناظم‌آباد": "Nazimabad",
+            "nazimabad": "Nazimabad",
+            "نارتھ ناظم آباد": "North Nazimabad",
+            "نارتھ ناظم‌آباد": "North Nazimabad",
+            "north nazimabad": "North Nazimabad",
+            
+            # Islamabad / Rawalpindi / Lahore
+            "بحریہ ٹاؤن": "Bahria Town",
+            "بحریہ‌ٹاؤن": "Bahria Town",
+            "bahria town": "Bahria Town",
+            "bahria": "Bahria Town",
+            "بلیو ایریا": "Blue Area",
+            "blue area": "Blue Area",
+            "ایف 10": "F-10",
+            "ایف-10": "F-10",
+            "f-10": "F-10",
+            "f10": "F-10",
+            "جی 13": "G-13",
+            "جی-13": "G-13",
+            "g-13": "G-13",
+            "g13": "G-13",
+            "آئی 8": "I-8",
+            "آئی-8": "I-8",
+            "i-8": "I-8",
+            "i8": "I-8",
+            
+            # Faisalabad
+            "ڈی گراؤنڈ": "D Ground",
+            "d ground": "D Ground",
+            "d-ground": "D Ground",
+            "مدینہ ٹاؤن": "Madina Town",
+            "madina town": "Madina Town",
+            "پیپلز کالونی": "Peoples Colony",
+            "peoples colony": "Peoples Colony",
+            
+            # Lahore
+            "گلبرگ": "Gulberg",
+            "gulberg": "Gulberg",
+            "جوہر ٹاؤن": "Johar Town",
+            "johar town": "Johar Town",
+            "ماڈل ٹاؤن": "Model Town",
+            "model town": "Model Town",
+            
+            # Peshawar
+            "کینٹ": "Cantt",
+            "cantt": "Cantt",
+            "حیات آباد": "Hayatabad",
+            "hayatabad": "Hayatabad",
+            "یونیورسٹی ٹاؤن": "University Town",
+            "university town": "University Town",
+            
+            # Rawalpindi
+            "چکلالہ": "Chaklala",
+            "chaklala": "Chaklala",
+            "پی ڈبلیو ڈی": "PWD",
+            "pwd": "PWD",
+            "صدر": "Saddar",
+            "saddar": "Saddar"
+        }
+
+        # 1. Match service
+        sorted_service_keys = sorted(urdu_service_map.keys(), key=len, reverse=True)
+        for key in sorted_service_keys:
+            is_match = False
+            if any('\u0600' <= char <= '\u06FF' for char in key):
+                if key in text:
+                    is_match = True
+            else:
+                pattern = r'\b' + re.escape(key) + r'\b'
+                if re.search(pattern, text_lower):
+                    is_match = True
+            if is_match:
+                extracted_service = urdu_service_map[key]
+                break
+                
+        # 2. Match city
+        sorted_city_keys = sorted(urdu_city_map.keys(), key=len, reverse=True)
+        for key in sorted_city_keys:
+            is_match = False
+            if any('\u0600' <= char <= '\u06FF' for char in key):
+                if key in text:
+                    is_match = True
+            else:
+                pattern = r'\b' + re.escape(key) + r'\b'
+                if re.search(pattern, text_lower):
+                    is_match = True
+            if is_match:
+                extracted_city = urdu_city_map[key]
+                break
+                
+        # 3. Match area
+        sorted_area_keys = sorted(urdu_area_map.keys(), key=len, reverse=True)
+        for key in sorted_area_keys:
+            is_match = False
+            if any('\u0600' <= char <= '\u06FF' for char in key):
+                if key in text:
+                    is_match = True
+            else:
+                pattern = r'\b' + re.escape(key) + r'\b'
+                if re.search(pattern, text_lower):
+                    is_match = True
+            if is_match:
+                extracted_area = urdu_area_map[key]
+                break
+                
+        return {
+            "service_type": extracted_service,
+            "city": extracted_city,
+            "area": extracted_area
+        }
+
     async def extract_intent(
         self,
         user_message: str,
@@ -77,7 +261,81 @@ class IntentAgent:
         config-driven fallback is retained for reliability and tests.
         """
         start = time.time()
+        
+        # Determine language
+        from ..core.guardrails import detect_language
+        lang = "urdu" if any("\u0600" <= char <= "\u06ff" for char in user_message) else detect_language(user_message)
+        lang = lang.lower()
+        
+        # Scan history for user turns to see if conversation language is Urdu or Roman Urdu
+        history_lang = None
+        if conversation_history:
+            for turn in reversed(conversation_history):
+                if turn.get("role") == "user":
+                    content = turn.get("content", "")
+                    curr_lang = "urdu" if any("\u0600" <= char <= "\u06ff" for char in content) else detect_language(content)
+                    if curr_lang in ("urdu", "roman_urdu"):
+                        history_lang = curr_lang.lower()
+                        break
+        effective_lang = lang if lang in ("urdu", "roman_urdu") else (history_lang or lang)
+        effective_lang = effective_lang.lower()
+        
+        # Try deterministic Urdu/Roman Urdu mapping on current message
+        det_map = self._extract_deterministic_urdu_roman(user_message, service_categories, cities, areas)
+        
+        # Scan history for service_type, city, area
+        history_service = None
+        history_city = None
+        history_area = None
+        if conversation_history:
+            for turn in reversed(conversation_history):
+                if turn.get("role") == "user":
+                    hist_msg = turn.get("content", "")
+                    hist_det = self._extract_deterministic_urdu_roman(hist_msg, service_categories, cities, areas)
+                    if not history_service and hist_det["service_type"]:
+                        history_service = hist_det["service_type"]
+                    if not history_city and hist_det["city"]:
+                        history_city = hist_det["city"]
+                    if not history_area and hist_det["area"]:
+                        history_area = hist_det["area"]
+
+        service_found = det_map["service_type"] or history_service
+        city_found = det_map["city"] or history_city
+        area_found = det_map["area"] or history_area
+
+        # High-performance LLM Bypass if service, city, or area is present
+        if effective_lang in ("urdu", "roman_urdu") and (service_found or city_found or area_found):
+            logger.info("Deterministic mapping found fields. Bypassing LLM call. intent_source='deterministic_bypass'")
+            intent = {
+                "service_type": service_found,
+                "city": city_found,
+                "area": area_found,
+                "time_preference": None,
+                "urgency": "normal",
+                "language_detected": effective_lang,
+                "price_preference": None,
+                "confidence": {
+                    "service_type": 1.0 if service_found else 0.20,
+                    "city": 1.0 if city_found else 0.20,
+                    "area": 1.0 if area_found else 0.30,
+                    "time_preference": 1.0,
+                    "urgency": 1.0,
+                    "language_detected": 1.0,
+                    "price_preference": 1.0,
+                },
+                "intent_source": "deterministic_bypass",
+                "needs_clarification": []
+            }
+            intent["needs_clarification"] = self._check_clarification(intent)
+            return intent
+
         fallback_intent = self._deterministic_intent(user_message, service_categories, cities, areas)
+        
+        # Override/prefer deterministic mapping values in fallback_intent
+        for field in ["service_type", "city", "area"]:
+            if det_map[field]:
+                fallback_intent[field] = det_map[field]
+                fallback_intent["confidence"][field] = 1.0
 
         if self.llm is None or not env_bool("ENABLE_LLM_INTENT", True):
             logger.info(
@@ -87,10 +345,16 @@ class IntentAgent:
                 fallback_intent.get("city"),
                 fallback_intent.get("needs_clarification"),
             )
+            fallback_intent["intent_source"] = "deterministic_fallback"
+            fallback_intent["language_detected"] = effective_lang
+            fallback_intent["needs_clarification"] = self._check_clarification(fallback_intent)
             return fallback_intent
 
         if not consume_llm_call_budget("intent.extract"):
             logger.info("Intent LLM skipped by call budget; returning deterministic fallback.")
+            fallback_intent["intent_source"] = "deterministic_fallback"
+            fallback_intent["language_detected"] = effective_lang
+            fallback_intent["needs_clarification"] = self._check_clarification(fallback_intent)
             return fallback_intent
 
         prompt = self._build_prompt(
@@ -121,10 +385,30 @@ class IntentAgent:
             model_intent = self._parse_intent_response(response.text)
         except Exception as exc:
             logger.warning("Intent LLM failed; falling back to deterministic extraction: %s", exc)
+            fallback_intent["intent_source"] = "deterministic_fallback"
+            fallback_intent["language_detected"] = effective_lang
+            fallback_intent["needs_clarification"] = self._check_clarification(fallback_intent)
             return fallback_intent
 
         intent = self._normalize_intent(model_intent, service_categories, cities, areas)
         intent = self._merge_deterministic_intent(fallback_intent, intent)
+        
+        # Override/prefer deterministic mapping values in LLM/merged intent
+        overridden = False
+        for field in ["service_type", "city", "area"]:
+            if det_map[field]:
+                if intent.get(field) != det_map[field]:
+                    overridden = True
+                intent[field] = det_map[field]
+                intent["confidence"][field] = 1.0
+                
+        if overridden:
+            intent["intent_source"] = "llm_with_deterministic_override"
+            logger.info("Deterministic mapping corrected LLM output. intent_source='llm_with_deterministic_override'")
+        else:
+            intent["intent_source"] = "llm"
+            
+        intent["language_detected"] = effective_lang
         intent["needs_clarification"] = self._check_clarification(intent)
 
         logger.info("Extracted intent: %s", json.dumps(intent, ensure_ascii=False))
@@ -494,6 +778,7 @@ class IntentAgent:
             "language_detected": "unknown",
             "price_preference": None,
             "confidence": {},
+            "intent_source": "llm",
         }
 
     def _check_clarification(self, intent: dict) -> list[str]:

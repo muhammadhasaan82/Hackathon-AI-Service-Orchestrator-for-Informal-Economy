@@ -239,6 +239,13 @@ class Orchestrator:
 
         return agents_used, handoff_trace, workflow_trace
 
+    def _add_assistant_turn(self, session_id: str, text: str, lang: str) -> str:
+        if lang in ("roman_urdu", "urdu") and text:
+            from ..core.guardrails import translate_response
+            text = translate_response(text, lang)
+        self.session_store.add_turn(session_id, "assistant", text)
+        return text
+
     def _return_payload(self, payload: dict) -> dict:
         # Apply multilingual response formatting
         session_id = payload.get("session_id")
@@ -408,8 +415,9 @@ class Orchestrator:
         # 1. Evaluate guardrails first
         from ..core.guardrails import evaluate_guardrails, translate_response
         guard_res = evaluate_guardrails(user_message)
-        lang_detected = guard_res["language_detected"]
+        lang_detected = guard_res["language_detected"].lower()
         session.setdefault("agent_state", {})["language_detected"] = lang_detected
+        self.session_store.save_session(session_id, session)
 
         if not guard_res["allowed"]:
             response_text = guard_res["message"]
@@ -423,7 +431,7 @@ class Orchestrator:
             })
             self.session_store.add_trace(session_id, "guardrail_agent", "evaluate_guardrails", guard_res)
             
-            self.session_store.add_turn(session_id, "assistant", response_text)
+            response_text = self._add_assistant_turn(session_id, response_text, lang_detected)
             
             handoff_trace = [
                 {
@@ -469,7 +477,7 @@ class Orchestrator:
                 response_start = time.time()
                 response_text = self.guardrails.sanitize_text(input_guardrail.get("message"))
                 self._log_response_generation(response_start, input_guardrail.get("status", "input_rejected"), response_text)
-                self.session_store.add_turn(session_id, "assistant", response_text)
+                response_text = self._add_assistant_turn(session_id, response_text, lang_detected)
                 return self._return_payload({
                     "response": response_text,
                     "agent_trace": trace,
@@ -484,7 +492,7 @@ class Orchestrator:
                 response_start = time.time()
                 response_text = self.guardrails.sanitize_text(self._greeting_clarification(user_message))
                 self._log_response_generation(response_start, "needs_clarification", response_text)
-                self.session_store.add_turn(session_id, "assistant", response_text)
+                response_text = self._add_assistant_turn(session_id, response_text, lang_detected)
                 latency_ms = (time.time() - start_time) * 1000
                 logger.info("Greeting handled without LLM in %.1fms", latency_ms)
                 return self._return_payload({
@@ -522,7 +530,7 @@ class Orchestrator:
 
                 if not faq_result.get("should_continue_booking"):
                     response_text = self.guardrails.sanitize_text(faq_result["response"])
-                    self.session_store.add_turn(session_id, "assistant", response_text)
+                    response_text = self._add_assistant_turn(session_id, response_text, lang_detected)
                     latency_ms = (time.time() - start_time) * 1000
                     logger.info(
                         "FAQ handled | class=%s source=%s status=%s latency=%.1fms",
@@ -558,7 +566,7 @@ class Orchestrator:
                     )
                     response_text = self.guardrails.sanitize_text(response_text)
                     self._log_response_generation(response_start, "booking_cancelled", response_text)
-                    self.session_store.add_turn(session_id, "assistant", response_text)
+                    response_text = self._add_assistant_turn(session_id, response_text, lang_detected)
                     return self._return_payload({
                         "response": response_text,
                         "agent_trace": trace,
@@ -645,7 +653,7 @@ class Orchestrator:
                         self.guardrails.booking_status("booking_confirmed", "booking_confirmed"),
                         response_text,
                     )
-                    self.session_store.add_turn(session_id, "assistant", response_text)
+                    response_text = self._add_assistant_turn(session_id, response_text, lang_detected)
                     return self._return_payload({
                         "response": response_text,
                         "agent_trace": trace,
@@ -672,7 +680,7 @@ class Orchestrator:
                         self.guardrails.booking_status("recommendation_ready", "awaiting_booking_confirmation"),
                         response_text,
                     )
-                    self.session_store.add_turn(session_id, "assistant", response_text)
+                    response_text = self._add_assistant_turn(session_id, response_text, lang_detected)
                     return self._return_payload({
                         "response": response_text,
                         "agent_trace": trace,
@@ -704,6 +712,9 @@ class Orchestrator:
                 intent_review = self.guardrails.evaluate_intent(intent)
                 intent["needs_clarification"] = intent_review.get("needs_clarification", [])
                 session["agent_state"]["intent"] = intent
+                if intent.get("language_detected"):
+                    lang_detected = intent["language_detected"].lower()
+                    session["agent_state"]["language_detected"] = lang_detected
                 session["metadata"]["language"] = intent.get("language_detected", session["metadata"].get("language", "english"))
                 self.session_store.save_session(session_id, session)
 
@@ -728,7 +739,7 @@ class Orchestrator:
                 handoff_message = self._compose_with_hybrid_faq(handoff_message, hybrid_faq_result)
                 handoff_message = self.guardrails.sanitize_text(handoff_message)
                 self._log_response_generation(response_start, "human_handoff_recommended", handoff_message)
-                self.session_store.add_turn(session_id, "assistant", handoff_message)
+                handoff_message = self._add_assistant_turn(session_id, handoff_message, lang_detected)
                 return self._return_payload({
                     "response": handoff_message,
                     "agent_trace": trace,
@@ -746,7 +757,7 @@ class Orchestrator:
                 clarification = self.guardrails.sanitize_text(clarification)
                 self._log_response_generation(response_start, "needs_clarification", clarification)
                 trace.append({"agent": "intent", "action": "ask_clarification", "fields": intent["needs_clarification"]})
-                self.session_store.add_turn(session_id, "assistant", clarification)
+                clarification = self._add_assistant_turn(session_id, clarification, lang_detected)
                 return self._return_payload({
                     "response": clarification,
                     "agent_trace": trace,
@@ -776,7 +787,7 @@ class Orchestrator:
                 msg = self._compose_with_hybrid_faq(msg, hybrid_faq_result)
                 msg = self.guardrails.sanitize_text(msg)
                 self._log_response_generation(response_start, "no_results", msg)
-                self.session_store.add_turn(session_id, "assistant", msg)
+                msg = self._add_assistant_turn(session_id, msg, lang_detected)
                 return self._return_payload({
                     "response": msg,
                     "agent_trace": trace,
@@ -842,7 +853,7 @@ class Orchestrator:
                     self.guardrails.booking_status("recommendation_ready", "awaiting_booking_confirmation"),
                     response_text,
                 )
-                self.session_store.add_turn(session_id, "assistant", response_text)
+                response_text = self._add_assistant_turn(session_id, response_text, lang_detected)
                 return self._return_payload({
                     "response": response_text,
                     "agent_trace": trace,
@@ -926,7 +937,7 @@ class Orchestrator:
                 self.guardrails.booking_status("booking_confirmed", "booking_confirmed"),
                 response_text,
             )
-            self.session_store.add_turn(session_id, "assistant", response_text)
+            response_text = self._add_assistant_turn(session_id, response_text, lang_detected)
             return self._return_payload({
                 "response": response_text,
                 "agent_trace": trace,
